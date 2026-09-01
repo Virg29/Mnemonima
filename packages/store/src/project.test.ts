@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BadRequestError, LanguageGateError, NotFoundError } from '@mnemonima/core'
 import { createProject, openProject, projectStats, removeProject } from './project.js'
 import { getMeta, META, nextNoteId } from './meta.js'
+import {
+  PROJECT_DATA_DIR,
+  legacyProjectDbPath,
+  projectDataDir,
+  projectDbPath,
+} from './paths.js'
 import { listEntries } from './registry.js'
 import { createSandbox } from './testing.js'
 import type { Sandbox } from './testing.js'
@@ -238,5 +244,86 @@ describe('note id allocation', () => {
 
     expect(nextNoteId(project.db)).toBe('SL-0003')
     project.db.close()
+  })
+})
+
+describe('the project data directory', () => {
+  let sandbox: Sandbox
+
+  beforeEach(() => {
+    sandbox = createSandbox()
+  })
+
+  afterEach(() => {
+    sandbox.cleanup()
+  })
+
+  it('puts everything it generates under one subdirectory', () => {
+    const dir = path.join(sandbox.projects, 'vault')
+    const project = createProject({ name: 'Shader Lab', dir })
+    project.db.close()
+
+    // The directory the operator named gains exactly one entry.
+    expect(fs.readdirSync(dir)).toEqual([PROJECT_DATA_DIR])
+    expect(fs.existsSync(path.join(dir, PROJECT_DATA_DIR, 'mnemonima.db'))).toBe(true)
+    expect(projectDbPath(dir)).toBe(path.join(projectDataDir(dir), 'mnemonima.db'))
+  })
+
+  it('leaves whatever else is in that directory alone', () => {
+    const dir = path.join(sandbox.projects, 'vault')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'README.md'), '# Mine\n')
+
+    const project = createProject({ name: 'Shader Lab', dir })
+    project.db.close()
+
+    expect(fs.readdirSync(dir).sort()).toEqual([PROJECT_DATA_DIR, 'README.md'])
+    expect(fs.readFileSync(path.join(dir, 'README.md'), 'utf8')).toBe('# Mine\n')
+  })
+
+  it('refuses a directory holding a database from the old layout', () => {
+    const dir = path.join(sandbox.projects, 'vault')
+    fs.mkdirSync(dir, { recursive: true })
+
+    // A real database, written where the previous layout kept it.
+    const older = createProject({ name: 'Shader Lab', dir: path.join(sandbox.projects, 'seed') })
+    older.db.close()
+    fs.copyFileSync(
+      projectDbPath(path.join(sandbox.projects, 'seed')),
+      legacyProjectDbPath(dir),
+    )
+
+    try {
+      createProject({ name: 'Vault', dir })
+      expect.unreachable('should have thrown')
+    } catch (error) {
+      expect(error).toBeInstanceOf(BadRequestError)
+      // Never silently create an empty second database beside the real one.
+      expect((error as BadRequestError).hint).toContain(PROJECT_DATA_DIR)
+      expect(fs.existsSync(projectDbPath(dir))).toBe(false)
+    }
+  })
+
+  it('removes the subdirectory with the data, but only when it is empty', () => {
+    const dir = path.join(sandbox.projects, 'vault')
+    const project = createProject({ name: 'Shader Lab', dir })
+    project.db.close()
+
+    // An export beside the database may be a git repository with history:
+    // deleting a database is not consent to delete that.
+    const kept = path.join(projectDataDir(dir), 'export')
+    fs.mkdirSync(kept, { recursive: true })
+    fs.writeFileSync(path.join(kept, 'SL-0001 Note.md'), '# Note\n')
+
+    removeProject('Shader Lab', { deleteData: true })
+    expect(fs.existsSync(projectDbPath(dir))).toBe(false)
+    expect(fs.existsSync(kept)).toBe(true)
+
+    fs.rmSync(kept, { recursive: true })
+    const again = createProject({ name: 'Shader Lab', dir })
+    again.db.close()
+    removeProject('Shader Lab', { deleteData: true })
+
+    expect(fs.existsSync(projectDataDir(dir))).toBe(false)
   })
 })

@@ -331,15 +331,26 @@ which the backlink B←A is derived immediately, without editing note B.
   models/                 # transformers.js weights, shared by every project
   logs/
 
-<project-dir>/
-  mnemonima.db            # THE source of truth
-  mnemonima.db-wal
-  export/                 # a git repository, generated, see §5
-    SL-0001 GPU pipeline.md
-    SL-0042 Shaders introduction.md
-  eval/
-    queries.yaml          # the golden set for tuning, §9
+<project-dir>/                # the directory the operator names, theirs
+  .mnemonima/                # everything we generate, and nothing else
+    mnemonima.db             # THE source of truth
+    mnemonima.db-wal
+    export/                  # a git repository, generated, see §5
+      SL-0001 GPU pipeline.md
+      SL-0042 Shaders introduction.md
+    eval/
+      queries.yaml           # the golden set for tuning, §9
 ```
+
+**One subdirectory, not three files in the operator's folder.** `--dir` may be
+an existing vault, a repository, or a directory of anything at all, so we add
+exactly one entry to it. Scattering `mnemonima.db`, its two sidecar files and
+`export/` across that directory made "which of these is mine" a question with no
+obvious answer, and made the project impossible to remove by hand without
+reading our documentation first.
+
+An absolute `export.path` still wins over this, which is how an export is fed to
+a vault that lives somewhere else entirely.
 
 ### 4.1 Hydration and LRU
 

@@ -15,6 +15,7 @@ import {
   requireNote,
   setNoteTags,
 } from '@mnemonima/store'
+import { projectDataDir } from '@mnemonima/store'
 import type { Db } from '@mnemonima/store'
 import { exportFilename, idFromFilename, parseFile, renderFrontmatter } from './frontmatter.js'
 import { commitAll, commitMessage, isRepository, push as gitPush } from './git.js'
@@ -31,7 +32,10 @@ import { writeNewNote, writeNoteBody } from './notes.js'
  */
 
 export function exportDirectory(projectDir: string, config: ProjectConfig): string {
-  return path.resolve(projectDir, config.export.path)
+  // Resolved against the project's own subdirectory, so the export sits beside
+  // the database it is a view of rather than in the operator's vault root. An
+  // absolute `export.path` still wins, which is how a vault elsewhere is fed.
+  return path.resolve(projectDataDir(projectDir), config.export.path)
 }
 
 export interface ExportOptions {

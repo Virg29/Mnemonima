@@ -19,7 +19,7 @@ import {
 } from '@mnemonima/store'
 import type { Db, Sandbox } from '@mnemonima/store'
 import { exportFilename, idFromFilename, parseFile, renderFrontmatter } from './frontmatter.js'
-import { exportProject, importProject } from './bridge.js'
+import { exportDirectory, exportProject, importProject } from './bridge.js'
 import { writeNewNote, writeNoteBody } from './notes.js'
 
 const SHADERS = `# Shaders introduction
@@ -140,7 +140,9 @@ describe('the markdown bridge', () => {
   const addNote = (body: string): string =>
     writeNewNote(db, config, body, { author: 'test' }).note.id
 
-  const exportDir = (): string => path.join(projectDir, 'export')
+  // Asks the code where the export goes rather than restating the rule: the
+  // layout is a decision, and a test that repeats it stops checking it.
+  const exportDir = (): string => exportDirectory(projectDir, config)
   const read = (file: string): string => fs.readFileSync(path.join(exportDir(), file), 'utf8')
 
   it('writes a file per note and reports what changed', () => {
@@ -309,7 +311,7 @@ describe('import conflicts', () => {
     const id = writeNewNote(db, config, SHADERS, { author: 'test' }).note.id
     exportProject(db, config, projectDir)
 
-    const file = path.join(projectDir, 'export', 'SL-0001 Shaders introduction.md')
+    const file = path.join(exportDirectory(projectDir, config), 'SL-0001 Shaders introduction.md')
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('single colour', 'the file version'))
 
     writeNoteBody(db, config, id, SHADERS.replace('single colour', 'the database version'), {
@@ -363,7 +365,7 @@ describe('import conflicts', () => {
     const id = writeNewNote(db, config, SHADERS, { author: 'test' }).note.id
     exportProject(db, config, projectDir)
 
-    const file = path.join(projectDir, 'export', 'SL-0001 Shaders introduction.md')
+    const file = path.join(exportDirectory(projectDir, config), 'SL-0001 Shaders introduction.md')
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('single colour', 'an edit'))
 
     const report = importProject(db, config, projectDir)

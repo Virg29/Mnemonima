@@ -73,7 +73,8 @@ Choosing a project:
   when exactly one project is registered that one is used automatically.
 
 Where things live:
-  <project dir>/mnemonima.db   the source of truth: notes, chunks, vectors, history
+  <project dir>/.mnemonima/    everything for one project: the database, its
+                               export and its eval set, and nothing else
   ${registryLocation()}
   ~/.mnemonima/models/         downloaded model weights, shared by all projects
 

@@ -14,7 +14,7 @@ import { getConfig, getMeta, META, setConfig, setMeta } from './meta.js'
 import { getActiveSpace } from './spaces.js'
 import { migrate } from './migrate.js'
 import type { MigrationResult } from './migrate.js'
-import { projectDbPath } from './paths.js'
+import { PROJECT_DATA_DIR, legacyProjectDbPath, projectDataDir, projectDbPath } from './paths.js'
 import { removeEntry, requireEntry, upsertEntry, findEntry, loadRegistry } from './registry.js'
 import type { RegistryEntry } from './registry.js'
 
@@ -98,11 +98,27 @@ export function createProject(options: CreateProjectOptions): CreateProjectResul
     )
   }
 
+  // A database from before the artefacts moved into `.mnemonima/`. Creating a
+  // second, empty one beside it would look like success and lose every note.
+  const legacy = legacyProjectDbPath(dir)
+  if (!databaseExists(dbPath) && databaseExists(legacy)) {
+    throw new BadRequestError(
+      `${dir} holds a database from an older layout`,
+      {
+        details: { found: legacy, expected: dbPath },
+        hint:
+          `project artefacts now live in ${PROJECT_DATA_DIR}/ — move it there first: ` +
+          `mkdir "${projectDataDir(dir)}" and move mnemonima.db, mnemonima.db-wal and ` +
+          `mnemonima.db-shm into it`,
+      },
+    )
+  }
+
   // Fail before touching the filesystem when no prefix can be derived either.
   if (requested === null && !databaseExists(dbPath)) derivePrefix(name)
 
   const existed = databaseExists(dbPath)
-  fs.mkdirSync(dir, { recursive: true })
+  fs.mkdirSync(projectDataDir(dir), { recursive: true })
 
   const db = openDatabase(dbPath)
   const migrations = migrate(db)
@@ -194,6 +210,12 @@ export function removeProject(
         deletedFiles.push(file)
       }
     }
+
+    // Only when nothing else is left: the export directory beside it may be a
+    // git repository with history, and deleting a database is not consent to
+    // delete that.
+    const data = projectDataDir(entry.dir)
+    if (fs.existsSync(data) && fs.readdirSync(data).length === 0) fs.rmdirSync(data)
   }
 
   return { entry, deletedFiles }

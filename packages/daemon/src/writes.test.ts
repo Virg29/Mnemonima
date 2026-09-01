@@ -13,6 +13,7 @@ import {
   setConfig,
 } from '@mnemonima/store'
 import type { Db, Sandbox } from '@mnemonima/store'
+import { exportDirectory } from '@mnemonima/engine'
 import { createServer } from './server.js'
 
 /**
@@ -225,7 +226,7 @@ describe('daemon writes', () => {
   })
 
   it('exports on request and cancels a pending automatic export', async () => {
-    fs.mkdirSync(path.join(projectDir, 'export'), { recursive: true })
+    fs.mkdirSync(exportDirectory(projectDir, getConfig(db())), { recursive: true })
     await request('POST', '/projects/Shader%20Lab/notes', write({ body: SHADERS }))
 
     // The write scheduled one; the explicit export supersedes it.
@@ -234,15 +235,17 @@ describe('daemon writes', () => {
     const exported = await request('POST', '/projects/Shader%20Lab/export', {})
     expect((exported.body['created'] as string[]).length).toBe(1)
     expect(server.exporter.pending()).toEqual([])
-    expect(fs.existsSync(path.join(projectDir, 'export', 'SL-0001 Shaders introduction.md'))).toBe(
-      true,
-    )
+    expect(
+      fs.existsSync(
+        path.join(exportDirectory(projectDir, getConfig(db())), 'SL-0001 Shaders introduction.md'),
+      ),
+    ).toBe(true)
   })
 
   it('does not conjure an export directory that was never made', async () => {
     await request('POST', '/projects/Shader%20Lab/notes', write({ body: SHADERS }))
 
     expect(server.exporter.pending()).toEqual([])
-    expect(fs.existsSync(path.join(projectDir, 'export'))).toBe(false)
+    expect(fs.existsSync(exportDirectory(projectDir, getConfig(db())))).toBe(false)
   })
 })
