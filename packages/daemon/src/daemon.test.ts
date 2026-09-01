@@ -5,6 +5,7 @@ import { createProject, createSandbox, getConfig, setConfig } from '@mnemonima/s
 import type { Sandbox } from '@mnemonima/store'
 import { createEmbedder, indexProject, writeNewNote } from '@mnemonima/engine'
 import { ProjectPool } from './pool.js'
+import { idleTimeoutMs } from './state.js'
 import { createServer } from './server.js'
 import type { DaemonStatus } from './server.js'
 
@@ -279,5 +280,24 @@ describe('the daemon API', () => {
     const response = await request('/projects/Garden/unload', { method: 'POST' })
     expect((await response.json()) as unknown).toEqual({ name: 'Garden', unloaded: true })
     expect(server.pool.isLoaded('Garden')).toBe(false)
+  })
+})
+
+describe('the idle shutdown', () => {
+  it('turns minutes into milliseconds', () => {
+    expect(idleTimeoutMs(30)).toBe(30 * 60_000)
+    expect(idleTimeoutMs(1)).toBe(60_000)
+  })
+
+  it('treats zero as never, rather than clamping it to a minute', () => {
+    // The UI offers this as "stays up until it is stopped"; an earlier version
+    // clamped it with Math.max(1, …), which was the opposite of what was set.
+    expect(idleTimeoutMs(0)).toBeNull()
+    expect(idleTimeoutMs(-5)).toBeNull()
+  })
+
+  it('treats a value that is not a number as never', () => {
+    expect(idleTimeoutMs(Number.NaN)).toBeNull()
+    expect(idleTimeoutMs(Number.POSITIVE_INFINITY)).toBeNull()
   })
 })

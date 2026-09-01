@@ -6,6 +6,7 @@ import { healthScreen } from './views/health.js'
 import { labScreen } from './views/lab.js'
 import { noteScreen } from './views/note.js'
 import { projectsScreen } from './views/projects.js'
+import { settingsScreen } from './views/settings.js'
 import { spacesScreen } from './views/spaces.js'
 import { termsScreen } from './views/terms.js'
 
@@ -30,6 +31,7 @@ if (root !== null) {
       .add(noteScreen())
       .add(termsScreen())
       .add(spacesScreen())
+      .add(settingsScreen())
       .add(healthScreen())
 
     try {

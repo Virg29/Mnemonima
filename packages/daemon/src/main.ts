@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { getConfig, openDatabase, projectDbPath, listEntries } from '@mnemonima/store'
 import { startServer } from './server.js'
-import { clearDaemonState, writeDaemonState } from './state.js'
+import { clearDaemonState, idleTimeoutMs, writeDaemonState } from './state.js'
 
 /**
  * The daemon entry point. Spawned detached by the CLI, or run in the foreground
@@ -57,22 +57,35 @@ writeDaemonState({
 process.stderr.write(`mnemonima daemon listening on ${server.url}\n`)
 
 let lastActivity = Date.now()
-const idleTimeoutMs = Math.max(1, settings.idleTimeoutMin) * 60_000
+
+// Zero means never; there is then no timer at all rather than one that can
+// never fire.
+const idleMs = idleTimeoutMs(settings.idleTimeoutMin)
 
 // A daemon nobody is talking to should not sit in memory forever. Activity is
 // measured by whether anything is still loaded rather than by request count,
 // so a long editing pause does not kill a warm index that is about to be used.
-const timer = setInterval(() => {
-  if (server.pool.status().length > 0) {
-    lastActivity = Date.now()
-    return
-  }
-  if (Date.now() - lastActivity > idleTimeoutMs) void shutdown('idle')
-}, 30_000)
-timer.unref()
+const timer =
+  idleMs === null
+    ? null
+    : setInterval(() => {
+        if (server.pool.status().length > 0) {
+          lastActivity = Date.now()
+          return
+        }
+        if (Date.now() - lastActivity > idleMs) void shutdown('idle')
+      }, 30_000)
+
+timer?.unref()
+
+process.stderr.write(
+  idleMs === null
+    ? 'idle shutdown is off; stop it with `mnemonima daemon stop`\n'
+    : `stopping itself after ${settings.idleTimeoutMin} idle minute(s)\n`,
+)
 
 async function shutdown(reason: string): Promise<void> {
-  clearInterval(timer)
+  if (timer !== null) clearInterval(timer)
   // A debounced export that never ran would silently lose the last edit from
   // the vault, so pending work is flushed before the process goes away.
   server.exporter.flushAll(server.pool.hotProjects())

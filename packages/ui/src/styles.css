@@ -479,3 +479,51 @@ a:hover {
   overflow-x: auto;
   font-size: 12px;
 }
+
+/* ---- settings --------------------------------------------------------- */
+
+.setting {
+  display: grid;
+  grid-template-columns: 16em 12em 1fr;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+
+.setting:first-of-type {
+  border-top: 0;
+}
+
+.setting label {
+  color: var(--text);
+  font-size: 13px;
+  cursor: help;
+}
+
+.setting input[type="number"],
+.setting input[type="text"],
+.setting select {
+  width: 100%;
+  min-width: 0;
+}
+
+.setting input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  justify-self: start;
+}
+
+.setting .hint {
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .setting {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .setting .hint {
+    grid-column: 1 / -1;
+  }
+}

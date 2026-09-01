@@ -1066,7 +1066,14 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
 6. **Spaces** — embedding spaces, building with a new model with progress (SSE),
    switching the active one, rollback.
 7. **Eval** — the golden set, metrics, run history, `--tune`.
-8. **Health** — the `doctor` report plus the revision log filtered by author (so
+8. **Settings** — every key `mnemonima config set` accepts, built from the
+   paths the daemon reports rather than from a list kept in the page, so a
+   setting added to `ProjectConfig` appears without anyone remembering to add
+   it. Each section says when a change takes effect: `search.*` on the next
+   query, `chunking.*` and `model.active` only after an index run, `daemon.*`
+   when the daemon restarts. A screen that let those look alike would teach the
+   operator that the settings do not work.
+9. **Health** — the `doctor` report plus the revision log filtered by author (so
    it is visible what the agent wrote).
 
 Build: Vite, static files bundled into the npm package and served by the daemon.
@@ -1208,7 +1215,7 @@ and that is a perfectly normal outcome.
 | **5. Daemon** | **done** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
 | **6. Markdown bridge** | **done** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
 | **7. MCP** | **done** | nineteen tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
-| **8. UI** | **done**, minus the eval screen | projects → graph → editor → search lab → terms → spaces → health | tuning the weights live with `why` |
+| **8. UI** | **done**, minus the eval screen | projects → graph → editor → search lab → terms → spaces → settings → health | tuning the weights live with `why` |
 | **9. Eval** | **next** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
 | **10+. Post-MVP** | planned | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
 

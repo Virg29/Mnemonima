@@ -164,3 +164,14 @@ function sleep(ms: number): Promise<void> {
     setTimeout(resolve, ms)
   })
 }
+
+/**
+ * How long the daemon may sit with nothing loaded before it stops itself.
+ *
+ * Zero or less means never. Clamping that to a minute — which an earlier
+ * version did — is the opposite of what the operator set, and the UI offers it
+ * as "stays up until it is stopped", so the two have to agree.
+ */
+export function idleTimeoutMs(minutes: number): number | null {
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : null
+}
