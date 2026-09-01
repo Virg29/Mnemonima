@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { EXIT, MnemonimaError } from '@mnemonima/core'
+import { BadRequestError, EXIT, MnemonimaError, applyPatch } from '@mnemonima/core'
 import {
+  createProject,
+  danglingLinks,
   incomingLinks,
   listEntries,
   listNotes,
@@ -12,6 +14,16 @@ import {
 } from '@mnemonima/store'
 import { loadGraph, neighboursOf, searchNotes } from '@mnemonima/engine'
 import type { SearchMode } from '@mnemonima/engine'
+import {
+  activateSpace,
+  readBatches,
+  readConfig,
+  readDoctor,
+  readRevisions,
+  readSpaces,
+  repairProject,
+  writeConfig,
+} from './admin.js'
 import { AutoExporter } from './exporter.js'
 import { ProjectPool } from './pool.js'
 import { renderUi } from './ui.js'
@@ -188,6 +200,33 @@ export function createServer(options: ServerOptions): {
     return context.json({ projects: current.registered, capacity: current.capacity })
   })
 
+  app.post('/projects', async (context) => {
+    const body = await readBody(context)
+    const name = typeof body['name'] === 'string' ? body['name'] : ''
+    const dir = typeof body['dir'] === 'string' ? body['dir'] : ''
+
+    if (name === '' || dir === '') {
+      throw new BadRequestError('a project needs a name and a directory', {
+        details: { name, dir },
+        hint: 'send { "name": "Shader Lab", "dir": "W:/kb/shaders" }',
+      })
+    }
+
+    const created = createProject({
+      name,
+      dir,
+      prefix: typeof body['prefix'] === 'string' ? body['prefix'] : undefined,
+    })
+
+    // The pool owns connections; this one was opened only to run migrations.
+    created.db.close()
+
+    return context.json(
+      { name: created.name, dir: created.dir, prefix: created.prefix, created: created.created },
+      201,
+    )
+  })
+
   app.post('/projects/:name/search', async (context) => {
     const project = pool.acquire(context.req.param('name'))
     const body = (await context.req.json().catch(() => ({}))) as {
@@ -200,10 +239,18 @@ export function createServer(options: ServerOptions): {
       from?: string
       depth?: number
       expandLinks?: number
+      overrides?: Record<string, unknown>
     }
 
+    // The search lab tries a weight without saving it. Every knob in §8.5 is
+    // read from the configuration at query time — boosts included, because
+    // Orama takes them per search — so overriding a copy for this request is
+    // all a live re-rank needs, and no index is rebuilt.
+    const config =
+      body.overrides === undefined ? project.config : applyPatch(project.config, body.overrides)
+
     const query = body.query ?? ''
-    const mode = body.mode ?? (project.config.search.mode as SearchMode)
+    const mode = body.mode ?? (config.search.mode as SearchMode)
 
     // Only the two vector modes pay for loading the model.
     const needsEmbedder = mode === 'hybrid' || mode === 'semantic'
@@ -213,7 +260,7 @@ export function createServer(options: ServerOptions): {
     const needsIndex = mode !== 'exact' && mode !== 'id' && mode !== 'graph'
     const index = needsIndex ? await pool.index(project) : undefined
 
-    const result = await searchNotes(project.handle.db, project.config, resolved, query, {
+    const result = await searchNotes(project.handle.db, config, resolved, query, {
       mode,
       index,
       limit: body.limit,
@@ -263,12 +310,32 @@ export function createServer(options: ServerOptions): {
         (graph.outgoing.get(note.id)?.size ?? 0) + (graph.incoming.get(note.id)?.size ?? 0),
     }))
 
-    const edges: { from: string; to: string }[] = []
+    const edges: { from: string; to: string; resolved: boolean }[] = []
     for (const [from, targets] of graph.outgoing) {
-      for (const to of targets) edges.push({ from, to })
+      for (const to of targets) edges.push({ from, to, resolved: true })
     }
 
-    return context.json({ project: project.name, nodes, edges })
+    // Dangling targets are data, not corruption (DESIGN.md 3.4), so the graph
+    // shows them: a phantom node per missing id, and the edge marked so the UI
+    // can draw it dashed. Leaving them out would hide exactly the case the
+    // operator wants to see.
+    const known = new Set(nodes.map((node) => node.id))
+    const phantoms = new Map<string, { id: string; title: string; degree: number }>()
+
+    for (const link of danglingLinks(project.handle.db)) {
+      if (known.has(link.dst)) continue
+
+      const phantom = phantoms.get(link.dst) ?? { id: link.dst, title: link.dst, degree: 0 }
+      phantoms.set(link.dst, { ...phantom, degree: phantom.degree + 1 })
+      edges.push({ from: link.src, to: link.dst, resolved: false })
+    }
+
+    return context.json({
+      project: project.name,
+      nodes,
+      phantoms: [...phantoms.values()],
+      edges,
+    })
   })
 
   // ---- writes ------------------------------------------------------------
@@ -378,6 +445,47 @@ export function createServer(options: ServerOptions): {
   app.post('/projects/:name/unload', (context) => {
     const name = context.req.param('name')
     return context.json({ name, unloaded: pool.release(name) })
+  })
+
+  // ---- administration ----------------------------------------------------
+  //
+  // None of these schedules an export: changing a search weight or activating a
+  // space does not touch a note, so it must not produce a git commit.
+
+  app.get('/projects/:name/config', (context) =>
+    context.json(readConfig(pool.acquire(context.req.param('name')))),
+  )
+
+  app.put('/projects/:name/config', async (context) => {
+    const project = pool.acquire(context.req.param('name'))
+    return context.json(writeConfig(project, await readBody(context)))
+  })
+
+  app.get('/projects/:name/spaces', (context) =>
+    context.json(readSpaces(pool.acquire(context.req.param('name')))),
+  )
+
+  app.post('/projects/:name/spaces/:id/activate', (context) =>
+    context.json(activateSpace(pool.acquire(context.req.param('name')), context.req.param('id'))),
+  )
+
+  app.get('/projects/:name/doctor', (context) =>
+    context.json(readDoctor(pool.acquire(context.req.param('name')))),
+  )
+
+  app.post('/projects/:name/doctor', (context) =>
+    context.json(repairProject(pool.acquire(context.req.param('name')))),
+  )
+
+  app.get('/projects/:name/notes/:id/revisions', (context) =>
+    context.json(readRevisions(pool.acquire(context.req.param('name')), context.req.param('id'))),
+  )
+
+  app.get('/projects/:name/batches', (context) => {
+    const limit = Number(context.req.query('limit') ?? '20')
+    return context.json(
+      readBatches(pool.acquire(context.req.param('name')), Number.isFinite(limit) ? limit : 20),
+    )
   })
 
   return { app, pool, exporter, token, status }
