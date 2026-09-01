@@ -24,7 +24,7 @@ export function settingsScreen(): Screen {
     needsProject: true,
 
     async render(surface: Surface): Promise<void> {
-      const { config, paths } = await api.config(surface.project)
+      const { config, paths, exportTarget } = await api.config(surface.project)
       const pending = new Map<string, unknown>()
 
       const status = el('span', { class: 'hint' })
@@ -69,7 +69,14 @@ export function settingsScreen(): Screen {
         for (const path of owned) claimed.add(path)
         if (owned.length === 0) continue
 
-        surface.body.append(sectionCard(section, owned, config, pending, touched))
+        const card = sectionCard(section, owned, config, pending, touched)
+
+        // The export setting is a relative path most of the time, so showing
+        // where it actually lands is the only way to know what was chosen —
+        // and automatic export does nothing at all when it is not there.
+        if (section.prefix === 'export') card.append(exportTargetRow(surface, exportTarget))
+
+        surface.body.append(card)
       }
 
       // Anything the sections above did not claim still gets a control: a new
@@ -93,6 +100,35 @@ export function settingsScreen(): Screen {
       }
     },
   }
+}
+
+function exportTargetRow(
+  surface: Surface,
+  target: { directory: string; exists: boolean },
+): HTMLElement {
+  return el('div', { class: 'setting' }, [
+    el('label', { text: 'writes to' }),
+    el('span', { class: 'id', text: target.directory, title: target.directory }),
+    target.exists
+      ? el('span', { class: 'hint ok', text: 'the directory exists' })
+      : el('span', { class: 'hint' }, [
+          el('span', {
+            class: 'warn',
+            text: 'missing, so automatic export does nothing — ',
+          }),
+          el('button', {
+            text: 'Create it',
+            onclick: async () => {
+              try {
+                await api.createExportDirectory(surface.project)
+                surface.reload()
+              } catch (error) {
+                surface.fail(error)
+              }
+            },
+          }),
+        ]),
+  ])
 }
 
 function sectionCard(

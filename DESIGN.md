@@ -442,7 +442,19 @@ Conflict policy: `--on-conflict ask|db|file|both`. `both` creates a duplicate
 note — `SL-0042` plus `SL-0043 (conflict copy)` — linked to each other, so
 nothing is lost.
 
-### 5.3 Automatic export and git
+### 5.3 Automatic indexing, export and git
+
+A note that was written but never indexed cannot be found, so every writer had
+to remember to run one — and an agent that forgets leaves a project whose newest
+notes are missing from search, which reads as a broken engine rather than a
+stale index. The daemon sees every write, so `index.auto` has it re-index what
+changed: a burst of writes debounces into one incremental run, and chunk hashes
+decide what is re-embedded.
+
+**The export waits for that run**, because exported frontmatter carries the
+outline and the automatic terms the run produces; exporting first would write a
+file one run out of date. With `index.auto` off the export is scheduled
+directly, so turning indexing off does not quietly turn exporting off too.
 
 Every write endpoint on the daemon schedules an export, and after a delay
 (`export.debounceSec`, 60 by default) the changed notes are written out to

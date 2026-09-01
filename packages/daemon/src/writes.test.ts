@@ -225,7 +225,28 @@ describe('daemon writes', () => {
     expect(requireNote(db(), 'SL-0001').body).toContain('single colour')
   })
 
+  it('schedules an index after a write, and the export after that', async () => {
+    fs.mkdirSync(exportDirectory(projectDir, getConfig(db())), { recursive: true })
+    await request('POST', '/projects/Shader%20Lab/notes', write({ body: SHADERS }))
+
+    // Exported frontmatter carries the outline and the automatic terms, which
+    // the index run produces, so the export waits for it rather than running
+    // beside it and writing a file that is one run out of date.
+    expect(server.indexer.pending()).toEqual(['Shader Lab'])
+    expect(server.exporter.pending()).toEqual([])
+
+    server.indexer.stop()
+  })
+
   it('exports on request and cancels a pending automatic export', async () => {
+    // With auto-indexing off the write schedules the export directly, which is
+    // what "off" has to mean: turning it off must not also stop exporting.
+    const project = server.pool.acquire('Shader Lab')
+    const config = getConfig(project.handle.db)
+    config.index.auto = false
+    setConfig(project.handle.db, config)
+    server.pool.release('Shader Lab')
+
     fs.mkdirSync(exportDirectory(projectDir, getConfig(db())), { recursive: true })
     await request('POST', '/projects/Shader%20Lab/notes', write({ body: SHADERS }))
 
@@ -243,8 +264,15 @@ describe('daemon writes', () => {
   })
 
   it('does not conjure an export directory that was never made', async () => {
+    const project = server.pool.acquire('Shader Lab')
+    const config = getConfig(project.handle.db)
+    config.index.auto = false
+    setConfig(project.handle.db, config)
+    server.pool.release('Shader Lab')
+
     await request('POST', '/projects/Shader%20Lab/notes', write({ body: SHADERS }))
 
+    // A vault is kept up to date, not conjured because an agent wrote a note.
     expect(server.exporter.pending()).toEqual([])
     expect(fs.existsSync(exportDirectory(projectDir, getConfig(db())))).toBe(false)
   })

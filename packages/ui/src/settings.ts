@@ -73,6 +73,14 @@ export const SECTIONS: readonly Section[] = [
     effect: 'live',
   },
   {
+    prefix: 'index',
+    title: 'Indexing',
+    hint:
+      'A note that was written but never indexed cannot be found. The daemon ' +
+      'sees the writes, so it can re-index what changed without being asked.',
+    effect: 'next-write',
+  },
+  {
     prefix: 'export',
     title: 'Export',
     hint: 'The markdown bridge and its git commit. Pushing is never automatic.',
@@ -105,6 +113,14 @@ export const CHOICES: Record<string, readonly string[]> = {
  * "never", a threshold that currently filters nothing.
  */
 export const NOTES: Record<string, string> = {
+  'index.auto':
+    'Off means every writer has to run `mnemonima index` itself, or the newest notes stay unfindable.',
+  'index.debounceSec':
+    'How long the writing has to stop before a run starts. A burst indexes once.',
+  'export.enabled':
+    'The directory below has to exist already: a vault is kept up to date, not conjured.',
+  'export.debounceSec': 'How long the writing has to stop before the export is written.',
+  'export.commit': 'Commits the export when it is a git repository. Pushing is separate.',
   'daemon.autoStart': 'When off, a search runs in the CLI process instead of asking the daemon.',
   'daemon.idleTimeoutMin': 'Zero means never: the daemon stays up until it is stopped.',
   'daemon.maxHotProjects': 'How many projects may be in memory at once. Each costs ~600 MB at scale.',

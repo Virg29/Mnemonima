@@ -79,9 +79,28 @@ export interface LinksConfig {
   materializeBacklinks: boolean
 }
 
+/**
+ * Re-indexing without being asked.
+ *
+ * A note that has been written but not indexed is invisible to search, so
+ * every writer had to remember to run one. The daemon sees the writes, so it
+ * can do it: a burst of them debounces into a single incremental run, which
+ * re-embeds only the chunks whose text actually changed.
+ */
+export interface IndexConfig {
+  /** Re-index what changed after a write through the daemon. */
+  auto: boolean
+  /** How long to wait for the writing to stop before starting. */
+  debounceSec: number
+}
+
 export interface ExportConfig {
   enabled: boolean
-  /** Directory relative to the project directory. */
+  /**
+   * Where the markdown goes. Relative paths resolve inside the project's own
+   * `.mnemonima/` directory; an absolute path wins, which is how an existing
+   * vault elsewhere is kept up to date.
+   */
   path: string
   debounceSec: number
   commit: boolean
@@ -111,6 +130,7 @@ export interface ProjectConfig {
   keywords: KeywordsConfig
   search: SearchConfig
   links: LinksConfig
+  index: IndexConfig
   export: ExportConfig
   daemon: DaemonConfig
   mcp: McpConfig
@@ -161,6 +181,7 @@ export const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
     tolerance: 1,
   },
   links: { materializeBacklinks: false },
+  index: { auto: true, debounceSec: 30 },
   export: { enabled: true, path: 'export', debounceSec: 60, commit: true, push: false },
   daemon: { autoStart: true, idleTimeoutMin: 30, maxHotProjects: 2, projectIdleMin: 15, port: 0 },
   mcp: { allowDestructive: false },

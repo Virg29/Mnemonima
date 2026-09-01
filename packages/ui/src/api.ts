@@ -169,6 +169,7 @@ export interface ConfigView {
   project: string
   config: ProjectConfig
   paths: string[]
+  exportTarget: { directory: string; exists: boolean }
 }
 
 export interface SpaceView {
@@ -284,6 +285,9 @@ export const api = {
 
   setConfig: (project: string, set: Record<string, unknown>): Promise<ConfigView> =>
     call('PUT', `/projects/${encode(project)}/config`, { set }),
+
+  createExportDirectory: (project: string): Promise<ConfigView> =>
+    call('POST', `/projects/${encode(project)}/export/directory`),
 
   spaces: (project: string): Promise<{ active: string | null; spaces: SpaceView[] }> =>
     call('GET', `/projects/${encode(project)}/spaces`),

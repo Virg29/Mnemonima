@@ -16,6 +16,7 @@ import { loadGraph, neighboursOf, searchNotes } from '@mnemonima/engine'
 import type { SearchMode } from '@mnemonima/engine'
 import {
   activateSpace,
+  createExportDirectory,
   readBatches,
   readConfig,
   readDoctor,
@@ -25,6 +26,7 @@ import {
   writeConfig,
 } from './admin.js'
 import { AutoExporter } from './exporter.js'
+import { AutoIndexer } from './indexer.js'
 import { ProjectPool } from './pool.js'
 import { uiFile, uiMissingPage } from './ui.js'
 import {
@@ -71,6 +73,7 @@ export interface RunningServer {
   readonly token: string
   readonly pool: ProjectPool
   readonly exporter: AutoExporter
+  readonly indexer: AutoIndexer
   close(): Promise<void>
 }
 
@@ -94,6 +97,7 @@ export function createServer(options: ServerOptions): {
   app: Hono
   pool: ProjectPool
   exporter: AutoExporter
+  indexer: AutoIndexer
   token: string
   status(): DaemonStatus
 } {
@@ -114,9 +118,23 @@ export function createServer(options: ServerOptions): {
 `),
   })
 
-  /** Every write goes through here, so nothing can forget to schedule an export. */
+  // Indexing comes first and export follows it, because exported frontmatter
+  // carries the outline and the automatic terms that the index run produces.
+  const indexer = new AutoIndexer(pool, {
+    onError: (message) => process.stderr.write(`${message}
+`),
+    onIndexed: (project, report) =>
+      process.stderr.write(
+        `auto-indexed "${project}": ${report.notesChunked} note(s), ` +
+          `${report.embedded} vector(s), ${Math.round(report.tookMs)} ms
+`,
+      ),
+    onSettled: (project) => exporter.schedule(project),
+  })
+
+  /** Every write goes through here, so nothing can forget what follows one. */
   const wrote = <T>(project: import('./pool.js').HotProject, result: T): T => {
-    exporter.schedule(project)
+    indexer.schedule(project)
     return result
   }
 
@@ -493,6 +511,10 @@ export function createServer(options: ServerOptions): {
   // the token like everything else: only the bundle is exempt.
   app.get('/models', (context) => context.json({ models: listModels() }))
 
+  app.post('/projects/:name/export/directory', (context) =>
+    context.json(createExportDirectory(pool.acquire(context.req.param('name')))),
+  )
+
   app.get('/projects/:name/spaces', (context) =>
     context.json(readSpaces(pool.acquire(context.req.param('name')))),
   )
@@ -520,11 +542,11 @@ export function createServer(options: ServerOptions): {
     )
   })
 
-  return { app, pool, exporter, token, status }
+  return { app, pool, exporter, indexer, token, status }
 }
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
-  const { app, pool, exporter, token } = createServer(options)
+  const { app, pool, exporter, indexer, token } = createServer(options)
 
   // The listen callback, not `server.address()`: binding is asynchronous, and
   // reading the address too early yields port 0 — which then gets written into
@@ -547,6 +569,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     token,
     pool,
     exporter,
+    indexer,
     close: () =>
       new Promise<void>((resolve) => {
         pool.closeAll()

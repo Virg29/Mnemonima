@@ -89,6 +89,16 @@ async function shutdown(reason: string): Promise<void> {
   // A debounced export that never ran would silently lose the last edit from
   // the vault, so pending work is flushed before the process goes away.
   server.exporter.flushAll(server.pool.hotProjects())
+
+  // A pending index is not flushed: it would load a model during shutdown and
+  // make stopping the daemon take a minute. It is said out loud instead, so
+  // notes are never quietly left out of the index.
+  const unindexed = server.indexer.pending()
+  if (unindexed.length > 0) {
+    process.stderr.write(
+      `not indexed before stopping: ${unindexed.join(', ')} — run \`mnemonima index\`\n`,
+    )
+  }
   clearDaemonState()
   process.stderr.write(`mnemonima daemon stopping (${reason})\n`)
   await server.close()

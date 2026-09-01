@@ -25,6 +25,8 @@ export interface AutoExportOptions {
 
 export class AutoExporter {
   readonly #timers = new Map<string, NodeJS.Timeout>()
+  /** Projects already told about, so a missing directory is said once. */
+  readonly #warned = new Set<string>()
   readonly #options: AutoExportOptions
 
   constructor(options: AutoExportOptions = {}) {
@@ -36,7 +38,23 @@ export class AutoExporter {
     if (!project.config.export.enabled) return
 
     const dir = exportDirectory(project.handle.dir, project.config)
-    if (!fs.existsSync(dir)) return
+
+    if (!fs.existsSync(dir)) {
+      // Still not created for them — see above. But silence was a trap once
+      // the directory became settable from the UI: an operator picks a folder,
+      // nothing ever appears, and nothing says why. Said once per project, so
+      // a burst of writes does not fill the log with it.
+      if (!this.#warned.has(project.name)) {
+        this.#warned.add(project.name)
+        this.#options.onError?.(
+          `auto-export of "${project.name}" is on but ${dir} does not exist; ` +
+            'create it, or point export.path somewhere that does',
+        )
+      }
+      return
+    }
+
+    this.#warned.delete(project.name)
 
     const existing = this.#timers.get(project.name)
     if (existing !== undefined) clearTimeout(existing)

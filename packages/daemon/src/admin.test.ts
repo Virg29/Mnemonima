@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TEST_MODEL_ID } from '@mnemonima/core'
@@ -280,5 +281,177 @@ describe('daemon administration', () => {
       expect(refused.status).toBe(400)
       expect(refused.body['hint']).toBeTruthy()
     })
+  })
+})
+
+describe('automatic indexing', () => {
+  let sandbox: Sandbox
+  let server: ReturnType<typeof createServer>
+
+  const request = async (
+    method: string,
+    route: string,
+    body?: unknown,
+  ): Promise<Record<string, unknown>> => {
+    const response = await server.app.fetch(
+      new Request(`http://127.0.0.1${route}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${server.token}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    )
+
+    return (await response.json()) as Record<string, unknown>
+  }
+
+  /** The debounce is a second at its shortest, so waiting is unavoidable. */
+  const settle = async (ms: number): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  const write = (body: string): Promise<Record<string, unknown>> =>
+    request('POST', '/projects/Shader%20Lab/notes', { author: 'test', body })
+
+  const hits = async (query: string): Promise<unknown[]> => {
+    const found = await request('POST', '/projects/Shader%20Lab/search', {
+      query,
+      mode: 'lexical',
+    })
+    return (found['hits'] as unknown[] | undefined) ?? []
+  }
+
+  beforeEach(async () => {
+    sandbox = createSandbox()
+
+    const project = createProject({ name: 'Shader Lab', dir: path.join(sandbox.projects, 'sl') })
+    const config = getConfig(project.db)
+    config.model.active = TEST_MODEL_ID
+    config.index.debounceSec = 1
+    config.export.enabled = false
+    setConfig(project.db, config)
+    project.db.close()
+
+    server = createServer({ version: 'test', snapshots: false })
+
+    // A seed note and one explicit run, so an active space exists: searching a
+    // project that has never been indexed is a 404, which is a different story.
+    await write(`# Rasterization
+
+Rasterization decides which pixels a triangle covers.
+`)
+    await request('POST', '/projects/Shader%20Lab/index', {})
+    server.indexer.stop()
+  })
+
+  afterEach(async () => {
+    // A run in flight would reopen the database the sandbox is about to delete.
+    server.indexer.stop()
+    while (server.indexer.busy()) await settle(50)
+
+    server.pool.closeAll()
+    sandbox.cleanup()
+  })
+
+  it('indexes a written note without being asked', async () => {
+    await write(`# Depth testing
+
+The depth test discards a fragment.
+`)
+
+    // Written, but not yet indexed: the run is waiting for the writing to stop.
+    expect(await hits('discards')).toEqual([])
+    expect(server.indexer.pending()).toEqual(['Shader Lab'])
+
+    await settle(1800)
+
+    expect((await hits('discards')).length).toBe(1)
+  })
+
+  it('indexes a burst of writes once', async () => {
+    await write(`# One
+
+The first paragraph.
+`)
+    await write(`# Two
+
+The second paragraph.
+`)
+    await write(`# Three
+
+The third paragraph.
+`)
+
+    // Three writes, one pending run: the timer resets rather than stacking.
+    expect(server.indexer.pending()).toEqual(['Shader Lab'])
+
+    await settle(1800)
+
+    expect((await hits('paragraph')).length).toBe(3)
+  })
+
+  it('does nothing when it is switched off', async () => {
+    const project = server.pool.acquire('Shader Lab')
+    const config = getConfig(project.handle.db)
+    config.index.auto = false
+    setConfig(project.handle.db, config)
+    server.pool.release('Shader Lab')
+
+    await write(`# Depth testing
+
+The depth test discards a fragment.
+`)
+    expect(server.indexer.pending()).toEqual([])
+
+    await settle(1500)
+
+    // Still unindexed, which is what "off" has to mean.
+    expect(await hits('discards')).toEqual([])
+  })
+})
+
+describe('the export target', () => {
+  let sandbox: Sandbox
+  let server: ReturnType<typeof createServer>
+
+  const request = async (method: string, route: string): Promise<Record<string, unknown>> => {
+    const response = await server.app.fetch(
+      new Request(`http://127.0.0.1${route}`, {
+        method,
+        headers: { authorization: `Bearer ${server.token}` },
+      }),
+    )
+    return (await response.json()) as Record<string, unknown>
+  }
+
+  beforeEach(() => {
+    sandbox = createSandbox()
+    const project = createProject({ name: 'Shader Lab', dir: path.join(sandbox.projects, 'sl') })
+    project.db.close()
+    server = createServer({ version: 'test', snapshots: false })
+  })
+
+  afterEach(() => {
+    server.pool.closeAll()
+    sandbox.cleanup()
+  })
+
+  it('reports where the export lands and whether it is there', async () => {
+    const view = await request('GET', '/projects/Shader%20Lab/config')
+    const target = view['exportTarget'] as { directory: string; exists: boolean }
+
+    // A relative `export.path` tells the operator nothing on its own.
+    expect(path.isAbsolute(target.directory)).toBe(true)
+    expect(target.exists).toBe(false)
+  })
+
+  it('creates it when asked, which is the operator saying yes', async () => {
+    const created = await request('POST', '/projects/Shader%20Lab/export/directory')
+    const target = created['exportTarget'] as { directory: string; exists: boolean }
+
+    expect(target.exists).toBe(true)
+    expect(fs.existsSync(target.directory)).toBe(true)
   })
 })

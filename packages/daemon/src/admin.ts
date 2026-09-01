@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { BadRequestError, applyPatch, flatten } from '@mnemonima/core'
 import type { ConfigPatch, ProjectConfig } from '@mnemonima/core'
 import {
@@ -10,7 +11,7 @@ import {
   setConfig,
   spaceUsage,
 } from '@mnemonima/store'
-import { runDoctor, fixDoctorFindings } from '@mnemonima/engine'
+import { exportDirectory, runDoctor, fixDoctorFindings } from '@mnemonima/engine'
 import type { DoctorFixReport, DoctorReport } from '@mnemonima/engine'
 import type { HotProject } from './pool.js'
 
@@ -28,14 +29,38 @@ export interface ConfigView {
   readonly config: ProjectConfig
   /** Every settable dotted path, so a form can be built without a second copy of the shape. */
   readonly paths: string[]
+  /**
+   * Where `export.path` actually lands, and whether it is there.
+   *
+   * The setting is a relative path most of the time, so showing it back
+   * verbatim tells the operator nothing about where the files will go — and
+   * automatic export does nothing at all when the directory is missing.
+   */
+  readonly exportTarget: { readonly directory: string; readonly exists: boolean }
 }
 
 export function readConfig(project: HotProject): ConfigView {
+  const directory = exportDirectory(project.handle.dir, project.config)
+
   return {
     project: project.name,
     config: project.config,
     paths: flatten(project.config).map(([key]) => key),
+    exportTarget: { directory, exists: fs.existsSync(directory) },
   }
+}
+
+/**
+ * Creates the export directory, on request.
+ *
+ * Automatic export deliberately does not do this: we keep a vault up to date,
+ * we do not conjure one because an agent wrote a note. A button is the
+ * operator saying yes, which is the missing half of that rule rather than an
+ * exception to it.
+ */
+export function createExportDirectory(project: HotProject): ConfigView {
+  fs.mkdirSync(exportDirectory(project.handle.dir, project.config), { recursive: true })
+  return readConfig(project)
 }
 
 /**
