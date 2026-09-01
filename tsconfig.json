@@ -10,5 +10,8 @@
       "@mnemonima/mcp": ["packages/mcp/src/index.ts"]
     }
   },
-  "include": ["packages/*/src/**/*.ts", "vitest.config.ts"]
+  "include": ["packages/*/src/**/*.ts", "vitest.config.ts"],
+  // The UI is browser code: it needs the DOM lib and a bundler resolution, so
+  // it carries its own tsconfig and is typechecked by its own build.
+  "exclude": ["packages/ui"]
 }

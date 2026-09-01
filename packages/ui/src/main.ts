@@ -1,0 +1,30 @@
+import './styles.css'
+import { api } from './api.js'
+import { App, failure } from './app.js'
+import { healthScreen } from './views/health.js'
+import { projectsScreen } from './views/projects.js'
+
+/**
+ * Bootstrap.
+ *
+ * The version comes from the daemon rather than from a build constant: the page
+ * is served by whichever daemon is running, and showing the version the assets
+ * were built against would be a lie the moment the two diverge.
+ */
+
+const root = document.querySelector<HTMLElement>('#app')
+
+if (root !== null) {
+  void (async () => {
+    const app = new App(root)
+
+    app.add(projectsScreen(app)).add(healthScreen())
+
+    try {
+      const health = await api.status()
+      await app.start(health.version)
+    } catch (error) {
+      root.append(failure(error))
+    }
+  })()
+}

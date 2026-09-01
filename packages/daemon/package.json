@@ -13,14 +13,21 @@
     "./main": "./dist/main.js",
     "./package.json": "./package.json"
   },
-  "files": ["dist"],
-  "engines": { "node": ">=20" },
-  "scripts": { "build": "tsup" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup"
+  },
   "dependencies": {
     "@mnemonima/core": "workspace:*",
     "@mnemonima/store": "workspace:*",
     "@mnemonima/engine": "workspace:*",
     "@hono/node-server": "^1.13.7",
-    "hono": "^4.6.14"
+    "hono": "^4.6.14",
+    "@mnemonima/ui": "workspace:*"
   }
 }

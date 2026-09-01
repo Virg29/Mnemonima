@@ -6,6 +6,7 @@ import {
   deleteTerm,
   listTerms,
   noteTerms,
+  promotionCandidates,
   removeAlias,
   requireNote,
   setNoteTags,
@@ -277,8 +278,15 @@ export function exportNow(
 }
 
 export function listVocabulary(project: HotProject, limit: number): Record<string, unknown> {
+  const { promoteMinDf, promoteMinScore } = project.config.keywords
+
   return {
     terms: listTerms(project.handle.db, { limit }),
+    // The vocabulary and the terms waiting for a decision about it are one
+    // screen in the UI, so they are one request: asking for candidates
+    // separately would only ever be followed by asking for the list.
+    candidates: promotionCandidates(project.handle.db, promoteMinDf, promoteMinScore),
+    thresholds: { minDf: promoteMinDf, minScore: promoteMinScore },
   }
 }
 

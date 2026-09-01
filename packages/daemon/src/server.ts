@@ -26,7 +26,7 @@ import {
 } from './admin.js'
 import { AutoExporter } from './exporter.js'
 import { ProjectPool } from './pool.js'
-import { renderUi } from './ui.js'
+import { uiFile, uiMissingPage } from './ui.js'
 import {
   aliasNote,
   changeTerm,
@@ -154,6 +154,13 @@ export function createServer(options: ServerOptions): {
 
     if (context.req.path === '/health') return next()
 
+    // The bundle itself is exempt. A `<script src>` cannot carry a header, so
+    // requiring the token for assets would mean putting it in every asset URL;
+    // and the files are the same shipped bundle for everyone, carrying no
+    // project data. Every route that reads or writes a project stays behind
+    // the token.
+    if (context.req.path.startsWith('/ui/assets/')) return next()
+
     const header = context.req.header('authorization') ?? ''
     const supplied = header.startsWith('Bearer ')
       ? header.slice(7)
@@ -193,7 +200,28 @@ export function createServer(options: ServerOptions): {
 
   // The page authenticates with `?token=`, which the middleware above accepts,
   // so it needs no exception of its own.
-  app.get('/ui', (context) => context.html(renderUi(options.version)))
+  app.get('/ui', (context) => {
+    const page = uiFile('/index.html')
+    if (page === null) return context.html(uiMissingPage(), 503)
+
+    // Never cached: the page names asset files by content hash, so a stale copy
+    // of it points at a bundle that no longer exists.
+    return context.html(new TextDecoder().decode(page.body), 200, { 'cache-control': 'no-store' })
+  })
+
+  app.get('/ui/*', (context) => {
+    const asset = uiFile(context.req.path.slice('/ui'.length))
+    if (asset === null) return context.notFound()
+
+    return context.body(asset.body, 200, {
+      'content-type': asset.type,
+      // The filenames carry a content hash, so a long cache is safe and makes
+      // a reload cost one request instead of a dozen.
+      'cache-control': context.req.path.includes('/assets/')
+        ? 'public, max-age=31536000, immutable'
+        : 'no-store',
+    })
+  })
 
   app.get('/projects', (context) => {
     const current = status()
