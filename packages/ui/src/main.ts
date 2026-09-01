@@ -6,6 +6,8 @@ import { healthScreen } from './views/health.js'
 import { labScreen } from './views/lab.js'
 import { noteScreen } from './views/note.js'
 import { projectsScreen } from './views/projects.js'
+import { spacesScreen } from './views/spaces.js'
+import { termsScreen } from './views/terms.js'
 
 /**
  * Bootstrap.
@@ -26,6 +28,8 @@ if (root !== null) {
       .add(labScreen())
       .add(graphScreen())
       .add(noteScreen())
+      .add(termsScreen())
+      .add(spacesScreen())
       .add(healthScreen())
 
     try {

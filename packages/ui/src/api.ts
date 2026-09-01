@@ -217,6 +217,15 @@ export interface BatchRow {
   endedAt: number
 }
 
+export interface ModelDescriptor {
+  id: string
+  dim: number
+  maxTokens: number
+  sizeMb: number
+  offline: boolean
+  note: string
+}
+
 export interface VocabularyEntry {
   term: string
   lemma: string
@@ -297,6 +306,8 @@ export const api = {
 
   batches: (project: string): Promise<{ batches: BatchRow[] }> =>
     call('GET', `/projects/${encode(project)}/batches`),
+
+  models: (): Promise<{ models: ModelDescriptor[] }> => call('GET', '/models'),
 
   terms: (project: string): Promise<{ terms: VocabularyEntry[]; candidates: VocabularyEntry[] }> =>
     call('GET', `/projects/${encode(project)}/terms`),

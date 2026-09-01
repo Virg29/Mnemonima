@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { BadRequestError, EXIT, MnemonimaError, applyPatch } from '@mnemonima/core'
+import { BadRequestError, EXIT, MnemonimaError, applyPatch, listModels } from '@mnemonima/core'
 import {
   createProject,
   danglingLinks,
@@ -488,6 +488,10 @@ export function createServer(options: ServerOptions): {
     const project = pool.acquire(context.req.param('name'))
     return context.json(writeConfig(project, await readBody(context)))
   })
+
+  // The model registry is static and carries no project data, but it is behind
+  // the token like everything else: only the bundle is exempt.
+  app.get('/models', (context) => context.json({ models: listModels() }))
 
   app.get('/projects/:name/spaces', (context) =>
     context.json(readSpaces(pool.acquire(context.req.param('name')))),
