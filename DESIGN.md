@@ -1,7 +1,11 @@
 # mnemonima — design document (v0.2)
 
-> Status: **agreed, implementation not started.**
+> Status: **stages 0–7 shipped; stage 8 (UI) is next.** See §15 for the board
+> and §18 for where the work stands.
 > Changes relative to v0.1 record the decisions taken in discussion — see §1.2.
+> This is the specification *and* the roadmap, so it is kept consistent with the
+> state of the repository: where a section describes something that was later
+> built differently, the section is corrected rather than left as a wish.
 > Everything in this repository is English: this document, the code, schemas,
 > configs, notes, UI strings, logs and commits. See §11.
 
@@ -47,8 +51,9 @@ Four faces of one core:
 
 - **Search latency:** up to 10 s is acceptable (the work is in the background).
   The target is < 1 s.
-- **CPU:** no more than half the cores. `onnxThreads = ceil(cores / 2)`, indexing
-  in a worker pool at lowered priority (`os.setPriority(PRIORITY_BELOW_NORMAL)`).
+- **CPU:** no more than half the cores. `intraOpNumThreads = ceil(cores / 2)`,
+  and indexing runs at lowered priority
+  (`os.setPriority(PRIORITY_BELOW_NORMAL)`).
 - **RAM:** 2–4 GB for the daemon.
 - **Scale:** starting at up to 1000 notes, a ceiling of ~10 000.
 
@@ -68,7 +73,7 @@ flowchart TB
     API["HTTP API + Bearer token"]
     QP["Query pipeline"]
     IX["Index manager<br/>Orama: notes + chunks"]
-    EMB["Embedder pool<br/>transformers.js / onnxruntime-node<br/>worker_threads, ceil(cores/2)"]
+    EMB["Embedder<br/>transformers.js / onnxruntime-node<br/>one session, intraOpNumThreads = ceil(cores/2)"]
     KW["Keyword engine<br/>YAKE + IDF + KeyBERT + gazetteer"]
     EXP["Exporter<br/>md round-trip + git autocommit"]
     REV["Revision log / undo"]
@@ -107,17 +112,24 @@ A monorepo (pnpm workspaces), published as a single `mnemonima` package:
 
 ```
 packages/
-  core/      # md parser, chunkers, keyword engine, embedder, VectorStore, search pipeline
+  core/      # md parser, chunkers, keyword engine, embedder, VectorStore, pure logic
   store/     # SQLite: schema, migrations, repositories, revisions
-  daemon/    # HTTP, LRU project manager, exporter, git
-  cli/       # thin client plus daemon auto-spawn
+  engine/    # orchestration: indexing, search, authoring, bridge, undo
+  daemon/    # HTTP, LRU project manager, exporter, git, the served UI
   mcp/       # MCP stdio adapter on top of the HTTP API
-  ui/        # Vite SPA, built to static files, served by the daemon
+  cli/       # thin client plus daemon auto-spawn
 ```
 
-At stages 0–2 it is acceptable to live as one package with this directory
-layout and split later — the package boundary is already drawn, so the split is
-mechanical.
+Dependencies point one way: `core <- store <- engine <- daemon <- mcp <- cli`.
+
+**`engine` was added during stage 1** and is not in the original list of six.
+That list put the search pipeline in `core` and persistence in `store`, which
+leaves no home for code that legitimately needs both — the indexing pipeline and
+search are exactly that, so they live in `engine`.
+
+**There is no `ui` package.** The first pass of the web UI is served by the
+daemon from `daemon/ui.ts`; if stage 8 makes it a Vite SPA large enough to
+deserve its own build, it becomes one then.
 
 ---
 
@@ -254,9 +266,11 @@ CREATE TABLE orama_snapshots (
 );
 ```
 
-**Optional:** an FTS5 table `notes_fts(body, title)` for the `exact` mode (a
-grep-like substring/regex search over the body) and for `doctor`. The main
-search does not go through it.
+**Not built:** an FTS5 table `notes_fts(body, title)` was pencilled in for the
+`exact` mode and for `doctor`. It turned out to be unnecessary — `exact` greps
+the note bodies directly (§8.3), and at this scale that is fast enough that a
+second copy of every body in the database would buy nothing. The main search
+never went through it in any case.
 
 ### 3.2 Mapping of your original schema
 
@@ -416,9 +430,9 @@ nothing is lost.
 
 ### 5.3 Automatic export and git
 
-The daemon watches for changes in the database and, after a delay
-(`autoExport.debounceSec`, 60 by default), writes the changed notes out to
-`export/` and commits:
+Every write endpoint on the daemon schedules an export, and after a delay
+(`export.debounceSec`, 60 by default) the changed notes are written out to
+`export/` and committed:
 
 ```
 mnemonima: update SL-0042, SL-0007; create SL-0113
@@ -427,9 +441,17 @@ mnemonima: update SL-0042, SL-0007; create SL-0113
 - `git init` happens at `project add --git`;
 - **push is never automatic** — only `mnemonima export --push`, by hand;
 - commit messages are in English (§11);
-- when `export/` is edited from outside (Obsidian) the watcher notices and
-  suggests `mnemonima import` — but **does not pull it in automatically**, so an
-  edit half-way through a sentence does not fly into the database.
+- `export.enabled` has to be on, and **the export directory has to exist
+  already**: we keep a vault up to date, we do not conjure one because an agent
+  wrote a note;
+- a pending export is flushed when the daemon stops, and an explicit `export`
+  cancels the pending one rather than racing it.
+
+**The other direction has no watcher, deliberately.** Nothing notices an edit
+made in Obsidian; `mnemonima import` is run by hand. A watcher that pulled
+changes in would have to decide when a file being typed into is finished, and
+guessing that wrong writes half a sentence into the database. Import is the one
+place where an explicit command is cheaper than the heuristic it would replace.
 
 ### 5.4 Attachments
 
@@ -505,8 +527,16 @@ you get a new space, with the old one left for rollback.
 - **gte needs no `query:` / `passage:` prefixes** (unlike e5/bge). That is why
   the model descriptor carries `queryPrefix` / `docPrefix` fields — when
   `bge-small-en-v1.5` is added they get filled in and the code does not change.
-- Batches of 16–32 chunks, a worker pool of `ceil(cores/2)` threads, process
-  priority lowered.
+- Batches of 16–32 chunks, and the process priority is dropped below normal for
+  the duration of an `index` run.
+
+**One ONNX session, not a worker pool.** The original plan said a pool of
+`worker_threads`. It is not worth it: onnxruntime already parallelises a single
+session across `intraOpNumThreads` (set to `ceil(cores/2)`), and inference runs
+on libuv's thread pool rather than blocking the event loop, so N sessions would
+cost N copies of the weights in RAM to buy throughput one session already has.
+The pool becomes worthwhile when the daemon has to stay responsive during a long
+re-index, and the `Embedder` interface is where it will go.
 
 Model registry (extensible):
 
@@ -674,7 +704,7 @@ one, but it should not win on a plain sum purely because it is long.
 | `hybrid` (default) | everything described above | ordinary search |
 | `semantic` | vectors only | "how a GPU computes pixels" |
 | `lexical` | BM25 only | exact terms, API names |
-| `exact` | substring/regex over the body (FTS5) | grep mode |
+| `exact` | grep over the note bodies; `/pattern/flags` is a regular expression | grep mode |
 | `graph` | traversal from a given note | `--from SL-0042 --depth 2` |
 | `id` | a direct lookup | a cheap call for an agent |
 
@@ -816,13 +846,19 @@ GET    /ui/*
 
 ### 10.3 MCP server
 
-Full access (read + write + administration), as decided.
+Full access (read + write + administration), as decided. Nineteen tools as
+built — the shape held, the list grew as the write path did:
 
-| Tool | Category |
+| Tools | Category |
 |---|---|
-| `mnemonima_list_projects`, `mnemonima_search`, `mnemonima_get_note`, `mnemonima_neighbors`, `mnemonima_list_terms` | read |
-| `mnemonima_create_note`, `mnemonima_update_note`, `mnemonima_link`, `mnemonima_unlink`, `mnemonima_add_term` | write |
-| `mnemonima_reindex`, `mnemonima_switch_model`, `mnemonima_set_weights`, `mnemonima_run_eval`, `mnemonima_export` | administration |
+| `mnemonima_search`, `mnemonima_get_note`, `mnemonima_list_notes`, `mnemonima_list_terms`, `mnemonima_graph` | read (5) |
+| `mnemonima_create_note`, `mnemonima_update_note`, `mnemonima_archive_note`, `mnemonima_delete_note`, `mnemonima_link`, `mnemonima_unlink`, `mnemonima_add_alias`, `mnemonima_add_term`, `mnemonima_block_term`, `mnemonima_remove_term`, `mnemonima_undo` | write (11) |
+| `mnemonima_index`, `mnemonima_export`, `mnemonima_status` | administration (3) |
+
+There is no `mnemonima_list_projects`: the session is bound to one project
+(point 5 below), so listing the others would be an invitation to a write that
+cannot be expressed anyway. Switching the model and setting weights stayed in
+the CLI, and `mnemonima_run_eval` waits for stage 9.
 
 **Mandatory consequences of full access** (otherwise one bad agent run pollutes
 the graph):
@@ -832,10 +868,13 @@ the graph):
 2. **Batch undo:** every MCP session gets a `batch_id`;
    `mnemonima undo --batch <id>` takes back everything the agent did in that
    session with one command.
-3. **Destructive operations behind a flag.** `delete_note` (hard),
-   `delete_space` and `reindex --full` with a different model require
-   `mcp.allowDestructive: true` in the config. It is off by default; the soft
-   delete (archiving) is always available.
+3. **Destructive operations behind a flag.** Deleting a note outright, forgetting
+   a manual term and reindexing with a different model require
+   `mcp.allowDestructive: true` in the config. It is off by default, and the
+   reversible form is always available — `mnemonima_archive_note` instead of
+   `mnemonima_delete_note`, `mnemonima_block_term` instead of
+   `mnemonima_remove_term`. The tool descriptions say so, so an agent learns the
+   rule by reading rather than by failing.
 4. **The language gate applies to an agent's writes** exactly as it does to a
    human's.
 5. **Project scope:** `mnemonima mcp -p proj` binds the session to one project,
@@ -852,11 +891,19 @@ Three layers, applied to notes, to queries and to writes over MCP alike.
 **Layer 1 — script gate (hard, cheap, deterministic).**
 The share of codepoints in non-Latin writing systems, through Unicode property
 escapes (`/\p{Script=Cyrillic}/u`, Han, Hiragana, Katakana, Hangul, Arabic,
-Hebrew, Greek, Devanagari). Any Cyrillic or CJK in the body → **reject**.
+Hebrew, Devanagari, Thai, Armenian, Georgian). Any Cyrillic or CJK in the body →
+**reject**.
 
 Important: the gate targets **writing systems**, not "non-ASCII". We allow
 `— – ' " × ° ≈ ½`, diacritics in proper nouns (`Gouraud`, `Björk`), emoji and
 mathematics. Otherwise we get false positives on perfectly normal English.
+
+**Greek is deliberately absent from the list**, though earlier drafts of this
+section named it. Single Greek letters are standard mathematical notation in
+technical notes — lambda and mu appear in our own configuration in §8.5 — so
+blocking the script would fire on every other note. Greek *prose* is caught by
+layer 2, which is where a language belongs when a single letter of it is
+legitimate English.
 
 **Layer 2 — language detection (soft).** `franc-min` on text longer than ~40
 characters. Not `eng` → a warning or a rejection, per the `language.gate:
@@ -896,39 +943,48 @@ mnemonima find -p SL --from SL-0042 --depth 2
 mnemonima find -p SL -q "..." --expand-links 1 --budget-tokens 2000 --why
 
 # notes
-mnemonima new -p SL --title "Shaders introduction" [--body-file x.md]
-mnemonima get -p SL SL-0042 [--json] [--with-neighbors]
+mnemonima new -p SL --title "Shaders introduction" [--file x.md]
+mnemonima get -p SL SL-0042 [--json] [--with-neighbours]
+mnemonima list -p SL
 mnemonima edit -p SL SL-0042            # $EDITOR, the write goes through the API
+mnemonima delete -p SL SL-0042          # archive; --hard to remove
 mnemonima link -p SL SL-0042 SL-0007 [--anchor "shader basics"]
-mnemonima alias add -p SL SL-0042 "shader intro"
-mnemonima history -p SL SL-0042
+mnemonima unlink -p SL SL-0042 SL-0007
+mnemonima links -p SL SL-0042
+mnemonima neighbours -p SL SL-0042
+mnemonima alias add|remove|list -p SL SL-0042 "shader intro"
+mnemonima history -p SL SL-0042 [--batches]
 mnemonima revert -p SL SL-0042 --rev 5
 mnemonima undo -p SL --batch <batch-id>
 
 # dictionary
-mnemonima terms list -p SL [--candidates]
-mnemonima terms pin|block|add -p SL "fragment shader"
+mnemonima terms list|candidates|of -p SL
+mnemonima terms add|pin|block|unblock|remove -p SL "fragment shader"
 
 # index and models
 mnemonima index -p SL [--full]
 mnemonima models list | pull <id>
-mnemonima space build -p SL --model Xenova/gte-base
-mnemonima space activate -p SL <space-id>
 mnemonima doctor -p SL [--fix]
-mnemonima stats -p SL
+mnemonima config get|set -p SL model.active Xenova/gte-base
 
 # the markdown bridge
 mnemonima export -p SL [--push]
 mnemonima import -p SL [--on-conflict ask|db|file|both]
 
-# quality
-mnemonima eval -p SL [--tune]
-
 # services
 mnemonima ui [-p SL]
-mnemonima mcp -p SL
-mnemonima daemon status|stop|restart|logs
+mnemonima mcp -p SL [--client claude-code]
+mnemonima daemon status|start|stop|restart|unload|logs|state
 ```
+
+Commands from earlier drafts of this section that do not exist. **`space build`
+/ `space activate`** turned out to be unnecessary: a space is addressed by a
+hash of its configuration (§6.4), so `config set model.active <id>` followed by
+`index` builds the new space and activates it in the same run. Setting the value
+back and indexing again reactivates the old space without re-embedding anything,
+because its chunks and vectors were never deleted — so a separate verb would
+only be a second way to say the same thing. **`eval`** arrives with stage 9, and
+**`stats`** folded into `daemon status` and `doctor`.
 
 ### 12.1 The contract for agents
 
@@ -970,6 +1026,14 @@ mnemonima daemon status|stop|restart|logs
 
 `mnemonima ui [-p proj]` brings the daemon up and opens
 `http://127.0.0.1:<port>/ui?token=…`.
+
+> **Status.** This section describes stage 8, which has not been built. What
+> ships today is a first pass — a single page served from `daemon/ui.ts`, no
+> build step, no dependencies: which projects are loaded, a search box with the
+> `why` breakdown, and the graph drawn on a 2D canvas with a Fruchterman–Reingold
+> layout run to completion before the first paint. It was written to see whether
+> the shape was right, and it was enough to answer that. Everything below —
+> sigma.js, the editor, the tuning knobs, dragging to link — is still the plan.
 
 1. **Projects** — the registry, statistics, adding a project.
 2. **Graph** — a force-directed graph. **graphology + sigma.js** (WebGL, handles
@@ -1081,26 +1145,31 @@ directly. Over the top 20 that is noticeably more accurate than any amount of
 weight tuning, but more expensive: `Xenova/ms-marco-MiniLM-L-6-v2`, ~50–150 ms
 for 20 pairs, +~90 MB RAM.
 
-What is done **now** (stage 2):
+What exists **now**, after stage 2:
 
-- Stage 7 of the pipeline (§8.2) is shaped as a pluggable interface:
+- The config holds `search.rerank.crossEncoder: false`, alongside
+  `recencyHalfLifeDays` and `degreePrior`. Nothing reads it yet.
+
+What was planned for stage 2 and **not built**, because there was nothing to
+plug in and an interface with one no-op implementation is a shape guessed
+without a user:
+
   ```ts
   interface Reranker {
     id: string
     rerank(query: string, hits: Hit[], signal: AbortSignal): Promise<Hit[]>
   }
   ```
-- One implementation is registered — `NoopReranker`, which returns its input
-  unchanged.
-- The config holds `search.rerank.crossEncoder: false`; the UI has a checkbox,
-  disabled and labelled "not implemented yet".
-- The reranker's contribution is already accounted for in the `why` breakdown
-  (§8.6) as a separate field.
 
-What is done **later**: `CrossEncoderReranker` — a second ONNX session, loaded
-lazily the first time the checkbox is turned on, its own worker, cancellation via
-`AbortSignal`. Registered in the same registry; the rest of the pipeline does not
-change by a single line.
+  There is no `Reranker` interface, no `NoopReranker`, no field for the
+  reranker's contribution in the `why` breakdown (§8.6), and no checkbox in the
+  UI. The knob in the config is the whole of the foundation.
+
+What is done **later**: the interface above, and behind it a
+`CrossEncoderReranker` — a second ONNX session, loaded lazily the first time the
+checkbox is turned on, its own worker, cancellation via `AbortSignal`. It slots
+into stage 7 of the pipeline (§8.2), which is a named stage with nothing in it,
+so the rest of the pipeline does not change by a single line.
 
 The effect is measured through the eval harness (§9): a run with the checkbox and
 one without, the delta on `nDCG@10`. If there is no gain the feature stays off,
@@ -1110,22 +1179,31 @@ and that is a perfectly normal outcome.
 
 ## 15. Stages
 
-| Stage | Content | Definition of done |
-|---|---|---|
-| **0. Skeleton** | pnpm monorepo, TS, tsup, vitest, CLI frame, SQLite schema + migrations | `mnemonima project add` creates the database |
-| **1. Indexing core** | md parser, language gate, two chunkers, embedder pool, `spaces`, cache keyed by `text_hash` | `index` + `find --mode semantic` over 100 notes |
-| **2. Hybrid** | Orama notes+chunks, strategy fusion, boosts, `--json`, `--why` | `find --mode hybrid` with a stable schema |
-| **3. Graph** | link parsing, backlinks, dangling targets, `link`, graph boost, expansion, `doctor` | `--expand-links 1` returns a subgraph |
-| **4. Terms** | YAKE + IDF + KeyBERT + structural, gazetteer, dictionary, promotion, 4 knobs | `terms list --candidates` makes sense |
-| **5. Daemon** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
-| **6. Markdown bridge** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
-| **7. MCP** | all three groups of tools, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
-| **8. UI** | projects → graph → editor → search lab → terms → spaces → eval → health | tuning the weights live with `why` |
-| **9. Eval** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
-| **10+. Post-MVP** | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
+| Stage | Status | Content | Definition of done |
+|---|---|---|---|
+| **0. Skeleton** | **done** | pnpm monorepo, TS, tsup, vitest, CLI frame, SQLite schema + migrations | `mnemonima project add` creates the database |
+| **1. Indexing core** | **done** | md parser, language gate, two chunkers, embedder, `spaces`, cache keyed by `text_hash` | `index` + `find --mode semantic` over 100 notes |
+| **2. Hybrid** | **done** | Orama notes+chunks, strategy fusion, boosts, `--json`, `--why` | `find --mode hybrid` with a stable schema |
+| **3. Graph** | **done** | link parsing, backlinks, dangling targets, `link`, graph boost, expansion, `doctor` | `--expand-links 1` returns a subgraph |
+| **4. Terms** | **done** | YAKE + IDF + KeyBERT + structural, gazetteer, dictionary, promotion, 4 knobs | `terms list --candidates` makes sense |
+| **5. Daemon** | **done** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
+| **6. Markdown bridge** | **done** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
+| **7. MCP** | **done** | nineteen tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
+| **8. UI** | **next**, first pass served by the daemon | projects → graph → editor → search lab → terms → spaces → eval → health | tuning the weights live with `why` |
+| **9. Eval** | planned | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
+| **10+. Post-MVP** | planned | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
 
 Stages 1–3 give a working search engine; 5–7 a working tool for an agent; 8–9
 manageable quality.
+
+Two things the board does not show, because they cut across stages rather than
+sitting inside one. `search.limits.minSimilarity` defaults to 0.25, which filters
+nothing with `gte-small` — its cosines sit near 0.7 even for unrelated text — so
+the floor needs a value chosen from the eval set at stage 9 rather than guessed
+now. And term extraction runs only for notes whose chunks changed, while corpus
+IDF moves under everyone else as the project grows, so a periodic
+`index --full` is what keeps the statistics honest until the daemon can schedule
+one.
 
 ### 15.1 What stage 7 closed
 
@@ -1164,7 +1242,7 @@ did not own the write path**. Now it does. Below is where each item landed.
 |---|---|
 | Hydrating Orama over 160k chunks takes tens of seconds | An `@orama/plugin-data-persistence` snapshot in a BLOB table; a full rebuild only when `index_version` changes |
 | An agent over MCP pollutes the graph | A revision per write, `undo --batch`, destructive operations behind a flag, git history as an audit trail (§10.3) |
-| Multi-strategy chunking doubles the cost of indexing | Dedup by `text_hash` (short notes produce identical chunks), a worker pool, below-normal priority |
+| Multi-strategy chunking doubles the cost of indexing | Dedup by `text_hash` (short notes produce identical chunks), batching, below-normal priority |
 | Changing the model or chunker breaks the index | Embedding spaces hashed from the configuration, coexistence, atomic switching, rollback (§6.4) |
 | export↔import conflicts | `*_manual` is authoritative, `*_auto` is ignored on import; `rev` + `body_hash` checks; `--on-conflict both` loses nothing (§5.2) |
 | Indexing makes the machine unusable | `ceil(cores/2)` threads, `PRIORITY_BELOW_NORMAL`, batching, cancellable tasks |
@@ -1211,8 +1289,23 @@ What we defer until publication itself: an English README with examples, badges,
 
 ---
 
-## 18. Decision status
+## 18. Where the work stands
 
-Every question raised while going through the technical vision is closed. There
-are no open blockers. The next step is stage 0 from §15: the monorepo,
-TypeScript, the SQLite schema with migrations, and the CLI frame.
+Every question raised while going through the technical vision is closed, and
+none of the decisions in §1.2 has had to be reversed in seven stages. There are
+no open blockers.
+
+**Built and in use** (§15, stages 0–7): the monorepo and the SQLite schema with
+its migration runner; the indexing pipeline with the language gate, two chunkers
+and the embedding cache; hybrid search with a decomposable `why` over six modes;
+the link graph with derived backlinks, preserved dangling targets, the graph
+boost and expansion; term extraction fusing YAKE, corpus IDF and candidate
+embeddings on top of the manual gazetteer; the local daemon with its hot-project
+pool; the markdown bridge with conflict resolution and git; and the MCP server
+with nineteen tools, every write attributed, batched and undoable.
+
+**Next** is stage 8, the UI. A first pass already ships, served by the daemon —
+status, a search lab and the graph — which was enough to see the shape and not
+enough to tune weights against. After it, stage 9 is what turns "this feels
+better" into a number, and until it exists, every weight in §8.5 is a considered
+guess rather than a measurement.
