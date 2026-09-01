@@ -30,6 +30,7 @@ describe('adopt', () => {
   let db: Db
   let config: ProjectConfig
   let vault: string
+  let projectDir: string
 
   const write = (relative: string, body: string): void => {
     const file = path.join(vault, relative)
@@ -40,8 +41,9 @@ describe('adopt', () => {
   beforeEach(() => {
     sandbox = createSandbox()
     vault = path.join(sandbox.projects, 'vault')
+    projectDir = path.join(sandbox.projects, 'sl')
 
-    const project = createProject({ name: 'Shader Lab', dir: path.join(sandbox.projects, 'sl') })
+    const project = createProject({ name: 'Shader Lab', dir: projectDir })
     db = project.db
 
     config = getConfig(db)
@@ -71,7 +73,7 @@ describe('adopt', () => {
   })
 
   it('changes nothing on a dry run, which is the default', () => {
-    const report = adoptVault(db, config, vault)
+    const report = adoptVault(db, config, projectDir, vault)
 
     expect(report.dryRun).toBe(true)
     expect(report.created).toBe(3)
@@ -79,7 +81,7 @@ describe('adopt', () => {
   })
 
   it('creates a note per file and keeps the body exactly as written', () => {
-    const report = adoptVault(db, config, vault, { dryRun: false })
+    const report = adoptVault(db, config, projectDir, vault, { dryRun: false })
 
     expect(report.created).toBe(3)
     expect(listNotes(db, { status: 'any', limit: -1 })).toHaveLength(3)
@@ -90,14 +92,14 @@ describe('adopt', () => {
   })
 
   it('keeps the original filename as an alias', () => {
-    adoptVault(db, config, vault, { dryRun: false })
+    adoptVault(db, config, projectDir, vault, { dryRun: false })
 
     // The point of it: this is what makes a link by filename resolve.
     expect(listAliases(db, 'SL-0001').map((alias) => alias.alias)).toContain('aspects')
   })
 
   it('makes the vault own links resolve, which is the whole exercise', () => {
-    adoptVault(db, config, vault, { dryRun: false })
+    adoptVault(db, config, projectDir, vault, { dryRun: false })
 
     for (const note of listNotes(db, { status: 'any', limit: -1 })) {
       syncNoteLinks(db, note.id, note.body, buildResolver(db))
@@ -109,8 +111,8 @@ describe('adopt', () => {
   })
 
   it('does not duplicate on a second run', () => {
-    adoptVault(db, config, vault, { dryRun: false })
-    const second = adoptVault(db, config, vault, { dryRun: false })
+    adoptVault(db, config, projectDir, vault, { dryRun: false })
+    const second = adoptVault(db, config, projectDir, vault, { dryRun: false })
 
     expect(second.created).toBe(0)
     expect(second.unchanged).toBe(3)
@@ -118,10 +120,10 @@ describe('adopt', () => {
   })
 
   it('updates the note a changed file belongs to, rather than making another', () => {
-    adoptVault(db, config, vault, { dryRun: false })
+    adoptVault(db, config, projectDir, vault, { dryRun: false })
     write('mechanics/wand.md', '# Mechanic: the wand\n\nRewritten upstream.\n')
 
-    const second = adoptVault(db, config, vault, { dryRun: false })
+    const second = adoptVault(db, config, projectDir, vault, { dryRun: false })
 
     expect(second.updated).toBe(1)
     expect(second.unchanged).toBe(2)
@@ -132,10 +134,10 @@ describe('adopt', () => {
   it('follows a file that moved as a new note, and says so', () => {
     // The source path is the identity, so a move reads as a new file. Better
     // that than guessing a rename and merging two notes into one.
-    adoptVault(db, config, vault, { dryRun: false })
+    adoptVault(db, config, projectDir, vault, { dryRun: false })
     fs.renameSync(path.join(vault, 'notes/plan.md'), path.join(vault, 'notes/roadmap.md'))
 
-    const second = adoptVault(db, config, vault, { dryRun: false })
+    const second = adoptVault(db, config, projectDir, vault, { dryRun: false })
     expect(second.created).toBe(1)
   })
 
@@ -145,7 +147,7 @@ describe('adopt', () => {
     })
 
     it('skips it by default and names the reason', () => {
-      const report = adoptVault(db, config, vault, { dryRun: false })
+      const report = adoptVault(db, config, projectDir, vault, { dryRun: false })
 
       expect(report.skipped).toBe(1)
       const skipped = report.files.find((file) => file.action === 'skipped')
@@ -154,7 +156,7 @@ describe('adopt', () => {
     })
 
     it('brings it in when asked, rather than losing it', () => {
-      const report = adoptVault(db, config, vault, { dryRun: false, importAnyway: true })
+      const report = adoptVault(db, config, projectDir, vault, { dryRun: false, importAnyway: true })
 
       expect(report.skipped).toBe(0)
       expect(report.created).toBe(4)
@@ -166,7 +168,7 @@ describe('adopt', () => {
     write('mechanics/README.md', '# Mechanics\n\nAn index.\n')
     write('notes/README.md', '# Notes\n\nAnother index.\n')
 
-    const report = adoptVault(db, config, vault)
+    const report = adoptVault(db, config, projectDir, vault)
     const collision = report.collisions.find((entry) => entry.name === 'readme')
 
     // `[text](README.md)` is ambiguous, and picking one would point half the
@@ -174,8 +176,22 @@ describe('adopt', () => {
     expect(collision?.paths).toEqual(['mechanics/README.md', 'notes/README.md'])
   })
 
+  it('never adopts its own export, however it is pointed at itself', () => {
+    // Measured, and it doubled a vault: 241 files came back as 482 notes. The
+    // export lands inside the directory being adopted whenever an operator
+    // points `export.path` at their own docs tree, which is the obvious thing
+    // to do when moving a project onto this.
+    const exported = { ...config, export: { ...config.export, path: '../vault/exported' } }
+    write('exported/SL-0001 Mechanic aspects.md', '# Mechanic: aspects\n\nA generated copy.\n')
+
+    const report = adoptVault(db, exported, projectDir, vault, { dryRun: false })
+
+    expect(report.created).toBe(3)
+    expect(listNotes(db, { status: 'any', limit: -1 })).toHaveLength(3)
+  })
+
   it('refuses a root that is not a directory', () => {
-    expect(() => adoptVault(db, config, path.join(vault, 'mechanics/aspects.md'))).toThrow(
+    expect(() => adoptVault(db, config, projectDir, path.join(vault, 'mechanics/aspects.md'))).toThrow(
       BadRequestError,
     )
   })

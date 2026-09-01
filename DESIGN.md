@@ -1210,10 +1210,22 @@ is a name a note answers to in search, and `docs/mechanics/aspects.md` is not
 one. A file that **moves** therefore reads as a new note, which is the honest
 outcome: guessing a rename would merge two notes on a hunch.
 
-**Measured on the case that motivated it.** The same 19 files that produced 118
-links, every one dangling, when added with `new --file`: adopted, they produce
-126 links of which 4 dangle — and those four point outside the adopted
-directory, so they are dangling in fact rather than by accident.
+**Measured on a copy of the case that motivated it** — 241 markdown files,
+adopted into a throwaway project rather than the live one. 1265 links, of which
+**one** dangles, and that one points at a Python script rather than a note.
+
+Two defects only that scale showed, both fixed:
+
+- Link targets arrive here with `.md` and a leading `./` already stripped by
+  `decodeTarget`, but with the directory intact, so `researches/README` matched
+  no alias: 348 of 1265 dangled. Resolution now reads a target as a **path from
+  the note that wrote it**, using the source paths `adopt` records. That is also
+  the only correct reading when six files are called `hierarchy.md`, one per
+  category, and each category's notes mean their own.
+- The export landed **inside** the directory being adopted — the obvious
+  arrangement when moving a project onto this — and the next run adopted it
+  back. 241 files became 482 notes. `adopt` now takes the project directory as a
+  positional argument so its own output cannot be forgotten.
 
 Do not mix it with the ordinary `import` (§5.2), which works **only** with our
 frontmatter.

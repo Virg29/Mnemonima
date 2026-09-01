@@ -2,9 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { BadRequestError, findBlockedScript, hashBody, stripCode } from '@mnemonima/core'
 import type { ProjectConfig } from '@mnemonima/core'
-import { addAlias, adoptedByPath, listAliases, recordAdopted } from '@mnemonima/store'
+import { addAlias, adoptedByPath, listAliases, projectDataDir, recordAdopted } from '@mnemonima/store'
 import type { AdoptedRow, Db } from '@mnemonima/store'
 import { normaliseSourcePath } from '@mnemonima/store'
+import { exportDirectory } from './bridge.js'
 import { writeNewNote, writeNoteBody } from './notes.js'
 
 /**
@@ -123,9 +124,17 @@ function findCollisions(
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/**
+ * @param projectDir where the project itself lives, so its own output can be
+ *   skipped. A positional parameter rather than an option because forgetting it
+ *   is not a small mistake: an export written inside the adopted directory is
+ *   adopted back on the next run, and the vault doubles. Measured, on a 241-file
+ *   vault that came back as 482 notes.
+ */
 export function adoptVault(
   db: Db,
   config: ProjectConfig,
+  projectDir: string,
   root: string,
   options: AdoptOptions = {},
 ): AdoptReport {
@@ -139,7 +148,17 @@ export function adoptVault(
   }
 
   const dryRun = options.dryRun !== false
-  const files = findMarkdown(resolved, options.ignore ?? DEFAULT_IGNORE)
+
+  // Everything we generate for this project, whether or not it sits inside the
+  // directory being adopted.
+  const ours = [projectDataDir(projectDir), exportDirectory(projectDir, config)].map((dir) =>
+    path.resolve(dir),
+  )
+
+  const files = findMarkdown(resolved, options.ignore ?? DEFAULT_IGNORE).filter(
+    (file) => !ours.some((dir) => file === dir || file.startsWith(dir + path.sep)),
+  )
+
   const known = adoptedByPath(db)
 
   const results: AdoptedFile[] = []

@@ -58,7 +58,7 @@ export function registerAdoptCommand(program: Command): void {
         const context = openContext(options.project)
 
         try {
-          const report = adoptVault(context.project.db, context.config, options.dir, {
+          const report = adoptVault(context.project.db, context.config, context.project.dir, options.dir, {
             dryRun: options.write !== true,
             importAnyway: options.importAnyway,
             author: 'adopt',

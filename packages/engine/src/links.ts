@@ -1,7 +1,7 @@
 import { parseLinks, parseNoteId } from '@mnemonima/core'
 import type { ParsedLink } from '@mnemonima/core'
 import type { Root } from 'mdast'
-import { aliasesByNote, listNotes, replaceNoteLinks } from '@mnemonima/store'
+import { adoptedByPath, aliasesByNote, listNotes, replaceNoteLinks } from '@mnemonima/store'
 import type { Db, LinkInput } from '@mnemonima/store'
 
 /**
@@ -29,24 +29,61 @@ import type { Db, LinkInput } from '@mnemonima/store'
 /**
  * `../mechanics/aspects.md#the-lock` -> `aspects`.
  *
- * Returns null when the target does not look like a file reference at all, so
- * an ordinary title containing a dot is not mangled into something shorter.
+ * A target counts as a file reference when it carries a markdown suffix **or**
+ * a directory component. The suffix alone is not enough: `decodeTarget` in
+ * `core` already strips a trailing `.md` and a leading `./`, so by the time a
+ * markdown link arrives here it usually reads `researches/README` — the
+ * directory is what is left, and requiring the extension meant this branch
+ * never fired on the case it was written for.
+ *
+ * Returns null otherwise, so a plain title is never mangled into something
+ * shorter than itself.
  */
 export function fileReferenceName(target: string): string | null {
   const trimmed = target.trim()
   if (trimmed === '' || /^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null
 
   const withoutAnchor = trimmed.split('#')[0]?.split('?')[0] ?? ''
+  const hasSuffix = /\.(md|markdown)$/i.test(withoutAnchor)
+  const hasDirectory = /[\\/]/.test(withoutAnchor)
+
+  if (!hasSuffix && !hasDirectory) return null
+
   const basename = withoutAnchor.split(/[\\/]/).pop() ?? ''
-
-  if (!/\.(md|markdown)$/i.test(basename)) return null
-
   const name = basename.replace(/\.(md|markdown)$/i, '').trim()
+
   return name === '' ? null : name
 }
 
+/**
+ * The path a target points at, seen from the note that wrote it.
+ *
+ * `ARTIFICE/hierarchy` in a note that came from `docs/researches/ARTIFICE/x.md`
+ * is `docs/researches/ARTIFICE/hierarchy`, and that is the only reading that
+ * gets it right: six files in this project are called `hierarchy.md`, one per
+ * category, and each category's notes mean their own.
+ */
+export function resolveAgainst(fromPath: string, target: string): string | null {
+  const trimmed = target.trim().split('#')[0]?.split('?')[0] ?? ''
+  if (trimmed === '' || /^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null
+
+  const base = fromPath.split('/').slice(0, -1)
+  const parts = trimmed.replace(/\\/g, '/').split('/')
+
+  const out = trimmed.startsWith('/') ? [] : [...base]
+  for (const part of parts) {
+    if (part === '' || part === '.') continue
+    if (part === '..') out.pop()
+    else out.push(part)
+  }
+
+  const joined = out.join('/').replace(/\.(md|markdown)$/i, '')
+  return joined === '' ? null : joined
+}
+
 export interface LinkResolver {
-  resolve(target: string): { dst: string; resolved: boolean }
+  /** `from` is the note that wrote the link, when a caller knows it. */
+  resolve(target: string, from?: string): { dst: string; resolved: boolean }
 }
 
 export function buildResolver(db: Db): LinkResolver {
@@ -72,8 +109,19 @@ export function buildResolver(db: Db): LinkResolver {
     }
   }
 
+  // Where each adopted note came from, both ways round. Empty for a project
+  // that was written rather than adopted, and then this branch never fires.
+  const adopted = adoptedByPath(db)
+  const byPath = new Map<string, string>()
+  const pathOf = new Map<string, string>()
+
+  for (const [sourcePath, row] of adopted) {
+    byPath.set(sourcePath.replace(/\.(md|markdown)$/i, '').toLowerCase(), row.noteId)
+    pathOf.set(row.noteId, sourcePath)
+  }
+
   return {
-    resolve(target: string) {
+    resolve(target: string, from?: string) {
       const leading = target.trim().split(/\s+/)[0] ?? ''
       if (parseNoteId(leading) !== null) {
         return { dst: leading, resolved: ids.has(leading) }
@@ -86,6 +134,22 @@ export function buildResolver(db: Db): LinkResolver {
 
       const title = byTitle.get(key)
       if (title !== undefined) return { dst: title, resolved: true }
+
+      // A path, read from where the linking note itself came from. Before the
+      // basename, because six files in one project can be called `hierarchy`
+      // and each folder's notes mean their own.
+      const fromPath = from === undefined ? undefined : pathOf.get(from)
+      if (fromPath !== undefined) {
+        const asPath = resolveAgainst(fromPath, target)
+        const byRelative = asPath === null ? undefined : byPath.get(asPath.toLowerCase())
+        if (byRelative !== undefined) return { dst: byRelative, resolved: true }
+      }
+
+      // Then as a path from the adopted root, which is how a link written from
+      // the top of the vault reads.
+      const fromRoot = resolveAgainst('', target)
+      const byRoot = fromRoot === null ? undefined : byPath.get(fromRoot.toLowerCase())
+      if (byRoot !== undefined) return { dst: byRoot, resolved: true }
 
       // Last, so a note actually named `notes.md` still wins over a file of
       // that name: the exact target is always tried before it is taken apart.
@@ -115,9 +179,10 @@ export function buildResolver(db: Db): LinkResolver {
 export function toLinkInputs(
   links: readonly ParsedLink[],
   resolver: LinkResolver,
+  from?: string,
 ): LinkInput[] {
   return links.map((link) => {
-    const { dst, resolved } = resolver.resolve(link.target)
+    const { dst, resolved } = resolver.resolve(link.target, from)
     return { dst, anchor: link.anchor, heading: link.heading, kind: link.kind, resolved }
   })
 }
@@ -136,7 +201,7 @@ export function syncNoteLinks(
   tree?: Root,
 ): number {
   const links = parseLinks(body, tree)
-  const inputs = toLinkInputs(links, resolver ?? buildResolver(db))
+  const inputs = toLinkInputs(links, resolver ?? buildResolver(db), noteId)
   replaceNoteLinks(db, noteId, inputs)
   return inputs.length
 }
