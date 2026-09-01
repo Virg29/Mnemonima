@@ -1,7 +1,7 @@
 # mnemonima — design document (v0.2)
 
-> Status: **stages 0–7 shipped; stage 8 (UI) is next.** See §15 for the board
-> and §18 for where the work stands.
+> Status: **stages 0–8 shipped; stage 9 (eval) is next.** See §15 for the
+> board and §18 for where the work stands.
 > Changes relative to v0.1 record the decisions taken in discussion — see §1.2.
 > This is the specification *and* the roadmap, so it is kept consistent with the
 > state of the repository: where a section describes something that was later
@@ -115,9 +115,10 @@ packages/
   core/      # md parser, chunkers, keyword engine, embedder, VectorStore, pure logic
   store/     # SQLite: schema, migrations, repositories, revisions
   engine/    # orchestration: indexing, search, authoring, bridge, undo
-  daemon/    # HTTP, LRU project manager, exporter, git, the served UI
+  daemon/    # HTTP, LRU project manager, exporter, git; serves the UI bundle
   mcp/       # MCP stdio adapter on top of the HTTP API
   cli/       # thin client plus daemon auto-spawn
+  ui/        # Vite SPA, built to static files, served by the daemon
 ```
 
 Dependencies point one way: `core <- store <- engine <- daemon <- mcp <- cli`.
@@ -127,9 +128,11 @@ That list put the search pipeline in `core` and persistence in `store`, which
 leaves no home for code that legitimately needs both — the indexing pipeline and
 search are exactly that, so they live in `engine`.
 
-**There is no `ui` package.** The first pass of the web UI is served by the
-daemon from `daemon/ui.ts`; if stage 8 makes it a Vite SPA large enough to
-deserve its own build, it becomes one then.
+**`ui` is a build, not a library.** It is a Vite bundle with no Node entry
+point; the daemon depends on it only to resolve the package directory and serve
+`dist/` as static files. sigma, graphology and CodeMirror are its
+devDependencies, because Vite compiles them in — a runtime dependency would make
+`npm i -g mnemonima` install a graph library it never loads.
 
 ---
 
@@ -1027,13 +1030,11 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
 `mnemonima ui [-p proj]` brings the daemon up and opens
 `http://127.0.0.1:<port>/ui?token=…`.
 
-> **Status.** This section describes stage 8, which has not been built. What
-> ships today is a first pass — a single page served from `daemon/ui.ts`, no
-> build step, no dependencies: which projects are loaded, a search box with the
-> `why` breakdown, and the graph drawn on a 2D canvas with a Fruchterman–Reingold
-> layout run to completion before the first paint. It was written to see whether
-> the shape was right, and it was enough to answer that. Everything below —
-> sigma.js, the editor, the tuning knobs, dragging to link — is still the plan.
+> **Status.** Built, except the Eval screen, which waits for stage 9 to have
+> anything to show. The UI is its own Vite package (`packages/ui`) and the
+> daemon serves the bundle; sigma.js, CodeMirror 6 and the drag-to-link dialog
+> are all here. One thing below is not: **there is no SSE progress on a space
+> build.** The daemon has no event stream, so a build reports when it finishes.
 
 1. **Projects** — the registry, statistics, adding a project.
 2. **Graph** — a force-directed graph. **graphology + sigma.js** (WebGL, handles
@@ -1059,6 +1060,13 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
 
 Build: Vite, static files bundled into the npm package and served by the daemon.
 There is no separate dev server in production.
+
+Two decisions the build forced. `base` is the absolute `/ui/`: relative asset
+paths resolve against `/ui` without its trailing slash and land on `/assets/`,
+which is not where the daemon mounts them. And `/ui/assets/*` is the one route
+besides `/health` that does not need the token — a `<script src>` cannot carry a
+header, and the bundle is the same shipped file for everyone, carrying no
+project data. Every route that reads or writes a project stays behind it.
 
 ### 13.1 Link creation by dragging
 
@@ -1189,8 +1197,8 @@ and that is a perfectly normal outcome.
 | **5. Daemon** | **done** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
 | **6. Markdown bridge** | **done** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
 | **7. MCP** | **done** | nineteen tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
-| **8. UI** | **next**, first pass served by the daemon | projects → graph → editor → search lab → terms → spaces → eval → health | tuning the weights live with `why` |
-| **9. Eval** | planned | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
+| **8. UI** | **done**, minus the eval screen | projects → graph → editor → search lab → terms → spaces → health | tuning the weights live with `why` |
+| **9. Eval** | **next** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
 | **10+. Post-MVP** | planned | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
 
 Stages 1–3 give a working search engine; 5–7 a working tool for an agent; 8–9
@@ -1295,7 +1303,7 @@ Every question raised while going through the technical vision is closed, and
 none of the decisions in §1.2 has had to be reversed in seven stages. There are
 no open blockers.
 
-**Built and in use** (§15, stages 0–7): the monorepo and the SQLite schema with
+**Built and in use** (§15, stages 0–8): the monorepo and the SQLite schema with
 its migration runner; the indexing pipeline with the language gate, two chunkers
 and the embedding cache; hybrid search with a decomposable `why` over six modes;
 the link graph with derived backlinks, preserved dangling targets, the graph
@@ -1304,8 +1312,12 @@ embeddings on top of the manual gazetteer; the local daemon with its hot-project
 pool; the markdown bridge with conflict resolution and git; and the MCP server
 with nineteen tools, every write attributed, batched and undoable.
 
-**Next** is stage 8, the UI. A first pass already ships, served by the daemon —
-status, a search lab and the graph — which was enough to see the shape and not
-enough to tune weights against. After it, stage 9 is what turns "this feels
-better" into a number, and until it exists, every weight in §8.5 is a considered
-guess rather than a measurement.
+… and the web UI: seven screens over the daemon's API, with the search lab
+tuning every weight live against a warm index and the graph creating a link by
+dragging.
+
+**Next** is stage 9, which is what turns "this feels better" into a number.
+Until it exists, every weight in §8.5 is a considered guess rather than a
+measurement — and so is `search.limits.minSimilarity`, which currently filters
+nothing. The eval screen of §13 is deliberately not built for the same reason:
+there is nothing yet for it to show.
