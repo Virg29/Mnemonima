@@ -327,3 +327,43 @@ describe('the project data directory', () => {
     expect(fs.existsSync(projectDataDir(dir))).toBe(false)
   })
 })
+
+describe('keeping out of the operator git repository', () => {
+  let sandbox: Sandbox
+
+  beforeEach(() => {
+    sandbox = createSandbox()
+  })
+
+  afterEach(() => {
+    sandbox.cleanup()
+  })
+
+  it('ignores itself from the inside, without touching their .gitignore', () => {
+    const dir = path.join(sandbox.projects, 'repo')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'build/\n')
+
+    const project = createProject({ name: 'Shader Lab', dir })
+    project.db.close()
+
+    const ours = path.join(projectDataDir(dir), '.gitignore')
+    expect(fs.readFileSync(ours, 'utf8')).toContain('*')
+
+    // Theirs is their file. We add one entry to their directory and nothing
+    // else, and the entry hides itself.
+    expect(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8')).toBe('build/\n')
+  })
+
+  it('leaves an existing one alone, because editing it was deliberate', () => {
+    const dir = path.join(sandbox.projects, 'repo')
+    const data = projectDataDir(dir)
+    fs.mkdirSync(data, { recursive: true })
+    fs.writeFileSync(path.join(data, '.gitignore'), '*\n!export/\n')
+
+    const project = createProject({ name: 'Shader Lab', dir })
+    project.db.close()
+
+    expect(fs.readFileSync(path.join(data, '.gitignore'), 'utf8')).toBe('*\n!export/\n')
+  })
+})

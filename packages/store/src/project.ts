@@ -57,6 +57,34 @@ function normaliseName(name: string): string {
   return trimmed
 }
 
+/**
+ * Makes the project directory invisible to git, from the inside.
+ *
+ * `--dir` is often an existing repository, and mnemonima's database, its
+ * sidecars and its snapshots are local state that nobody wants committed. The
+ * alternative is editing the operator's own `.gitignore`, which is their file
+ * and not ours to write to. A `.gitignore` inside our own directory that
+ * ignores everything including itself achieves the same thing and touches
+ * nothing outside it.
+ *
+ * An existing file is left alone: an operator who has edited it — to keep an
+ * export subdirectory tracked, say — meant it.
+ */
+function ignoreOurselves(dataDir: string): void {
+  const file = path.join(dataDir, '.gitignore')
+  if (fs.existsSync(file)) return
+
+  fs.writeFileSync(
+    file,
+    [
+      '# mnemonima keeps local state here: the database is the source of truth,',
+      '# not something to commit. Delete this file to track it anyway.',
+      '*',
+      '',
+    ].join('\n'),
+  )
+}
+
 export function createProject(options: CreateProjectOptions): CreateProjectResult {
   // Everything that can reject the request is checked before any directory or
   // database file is created: a failed command must leave no artefacts behind.
@@ -118,7 +146,9 @@ export function createProject(options: CreateProjectOptions): CreateProjectResul
   if (requested === null && !databaseExists(dbPath)) derivePrefix(name)
 
   const existed = databaseExists(dbPath)
-  fs.mkdirSync(projectDataDir(dir), { recursive: true })
+  const data = projectDataDir(dir)
+  fs.mkdirSync(data, { recursive: true })
+  ignoreOurselves(data)
 
   const db = openDatabase(dbPath)
   const migrations = migrate(db)
@@ -211,11 +241,21 @@ export function removeProject(
       }
     }
 
-    // Only when nothing else is left: the export directory beside it may be a
+    const data = projectDataDir(entry.dir)
+    if (!fs.existsSync(data)) return { entry, deletedFiles }
+
+    // The `.gitignore` is ours, written when the project was created, so it
+    // goes with the data rather than keeping the directory alive forever.
+    const ignore = path.join(data, '.gitignore')
+    if (fs.readdirSync(data).length === 1 && fs.existsSync(ignore)) {
+      fs.rmSync(ignore)
+      deletedFiles.push(ignore)
+    }
+
+    // Only when nothing else is left: an export beside the database may be a
     // git repository with history, and deleting a database is not consent to
     // delete that.
-    const data = projectDataDir(entry.dir)
-    if (fs.existsSync(data) && fs.readdirSync(data).length === 0) fs.rmdirSync(data)
+    if (fs.readdirSync(data).length === 0) fs.rmdirSync(data)
   }
 
   return { entry, deletedFiles }

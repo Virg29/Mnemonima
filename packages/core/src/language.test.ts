@@ -3,7 +3,6 @@ import { LanguageGateError } from './errors.js'
 import {
   assertEnglish,
   assertEnglishScript,
-  detectLanguage,
   findBlockedScript,
   gateText,
   isEnglishScript,
@@ -66,27 +65,30 @@ describe('script gate', () => {
   })
 })
 
-describe('language detection (layer 2)', () => {
-  it('says nothing about text too short to judge', () => {
-    expect(detectLanguage('shaders').code).toBe('und')
-    expect(detectLanguage('shaders').decisive).toBe(false)
+describe('what the gate deliberately does not judge', () => {
+  it('accepts an English query that a trigram detector called Dutch', () => {
+    // The regression that removed the statistical layer. franc-min ranked this
+    // nld=1.000 and did not rank English at all; the gate read that absence as
+    // proof and refused a correct question from the one consumer that matters.
+    const query = 'why does a particle break rendering when it opens its own buffer'
+
+    expect(gateText(query, 'query').ok).toBe(true)
+    expect(() => assertEnglish(query, 'query')).not.toThrow()
   })
 
-  it('recognises English prose', () => {
-    const text =
-      'A fragment shader runs once for every rasterized pixel and writes a single ' +
-      'colour value to the framebuffer after the depth test has passed.'
-    expect(detectLanguage(text).code).toBe('eng')
-  })
-
-  it('flags decisively non-English Latin-script prose', () => {
-    const text =
+  it('accepts Latin-script prose that is not English', () => {
+    // The cost of the trade, stated so it is a decision rather than a gap: the
+    // model handles this poorly, but it does not choke, and catching it was
+    // worth less than rejecting correct English cost.
+    const german =
       'Der Fragment-Shader wird fuer jeden gerasterten Bildpunkt einmal ausgefuehrt ' +
       'und schreibt einen einzigen Farbwert in den Bildspeicher.'
-    const detection = detectLanguage(text)
 
-    expect(detection.code).not.toBe('eng')
-    expect(detection.decisive).toBe(true)
+    expect(gateText(german, 'note body').ok).toBe(true)
+  })
+
+  it('still refuses a non-Latin script, which is the whole point', () => {
+    expect(gateText('шейдеры и растеризация пикселей', 'note body').ok).toBe(false)
   })
 })
 

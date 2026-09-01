@@ -1,26 +1,32 @@
-import { francAll } from 'franc-min'
 import { LanguageGateError } from './errors.js'
 import { stripCode } from './markdown.js'
 
 /**
  * The English-only gate — DESIGN.md 11.
  *
- * Layer 1 (`findBlockedScript`) is a hard, cheap, deterministic writing-system
- * check. It targets *scripts*, not "non-ASCII": dashes, quotes, degree signs,
- * diacritics in proper nouns, emoji and mathematical symbols are all legitimate
- * English text and must pass.
+ * One check, not three. `findBlockedScript` is a hard, cheap, deterministic
+ * writing-system test, and `gateCodeBlocks` decides whether fenced code is
+ * exempt from it. That is the whole gate.
  *
- * Greek is deliberately absent from the blocklist. Single Greek letters are
- * standard mathematical notation in technical notes — lambda, mu, alpha appear
- * in our own configuration — and blocking them would produce a false positive
- * on every other note. Greek *prose* is caught by layer 2 instead.
+ * **It targets scripts, not "non-ASCII".** Dashes, curly quotes, degree signs,
+ * diacritics in proper nouns (`Gouraud`, `Björk`), emoji and mathematical
+ * symbols are legitimate English and must pass. An ASCII-only rule would reject
+ * every one of them.
  *
- * Layer 2 (`detectLanguage`) is statistical, so it can be wrong. It only
- * rejects when the detector is decisive: English losing narrowly to another
- * Latin-script language is treated as noise, not as a violation.
+ * **Greek is deliberately absent from the list.** Single Greek letters are
+ * standard mathematical notation in technical notes — lambda and mu name
+ * parameters in our own configuration — so blocking the script would fire on
+ * every other note.
  *
- * Layer 3 is the caller's choice of `gateCodeBlocks`: fenced code may carry
- * string literals in any language and is stripped before either layer runs.
+ * There used to be a statistical layer over `franc-min`. It was removed because
+ * it rejected correct English: on the query "why does a particle break
+ * rendering when it opens its own buffer" the detector ranked Dutch first at
+ * 1.000 and did not rank English at all, and the gate read that absence as
+ * proof rather than as the detector having nothing to go on. Sixty-four
+ * characters is not enough text for trigram statistics, and a search query is
+ * rarely longer. What the layer could catch was Latin-script prose, which the
+ * model handles poorly but does not choke on; what it cost was a correct answer
+ * to a correct question, from the one consumer that matters.
  */
 
 export type LanguageGateMode = 'strict' | 'warn' | 'off'
@@ -43,12 +49,6 @@ const BLOCKED_SCRIPTS: readonly BlockedScript[] = [
   { name: 'Armenian', pattern: /\p{Script=Armenian}/u },
   { name: 'Georgian', pattern: /\p{Script=Georgian}/u },
 ]
-
-/** Below this many characters statistical detection is noise, so it is skipped. */
-export const MIN_DETECTION_LENGTH = 40
-
-/** English may lose to another language by this much before it counts as a violation. */
-const DETECTION_MARGIN = 0.85
 
 export interface TextPosition {
   readonly line: number
@@ -91,28 +91,7 @@ export function isEnglishScript(text: string): boolean {
   return findBlockedScript(text) === null
 }
 
-export interface LanguageDetection {
-  /** ISO 639-3 code, or `und` when the text is too short to judge. */
-  readonly code: string
-  /** True when English is absent or clearly beaten. */
-  readonly decisive: boolean
-}
-
-export function detectLanguage(text: string): LanguageDetection {
-  if (text.trim().length < MIN_DETECTION_LENGTH) return { code: 'und', decisive: false }
-
-  const scores = francAll(text)
-  const top = scores[0]
-  if (top === undefined || top[0] === 'und') return { code: 'und', decisive: false }
-  if (top[0] === 'eng') return { code: 'eng', decisive: false }
-
-  const english = scores.find(([code]) => code === 'eng')
-  const decisive = english === undefined || english[1] < top[1] * DETECTION_MARGIN
-
-  return { code: top[0], decisive }
-}
-
-export type GateReason = 'script' | 'language'
+export type GateReason = 'script'
 
 export interface GateFinding {
   readonly reason: GateReason
@@ -148,16 +127,6 @@ export function gateText(text: string, subject: string, options: GateOptions = {
         `"${violation.char}" at line ${violation.position.line}, ` +
         `column ${violation.position.column}`,
       details: { subject, ...violation },
-    }
-    return { ok: mode === 'warn', finding, warning: mode === 'warn' }
-  }
-
-  const detection = detectLanguage(source)
-  if (detection.decisive) {
-    const finding: GateFinding = {
-      reason: 'language',
-      message: `${subject} looks like "${detection.code}", not English`,
-      details: { subject, detected: detection.code },
     }
     return { ok: mode === 'warn', finding, warning: mode === 'warn' }
   }
@@ -199,10 +168,7 @@ export function assertEnglish(
   if (!result.ok) {
     throw new LanguageGateError(result.finding.message, {
       details: result.finding.details,
-      hint:
-        result.finding.reason === 'script'
-          ? 'all stored content and every query must be English (DESIGN.md 11)'
-          : 'set language.gate to "warn" in the project config if this detection is wrong',
+      hint: 'all stored content and every query must be English (DESIGN.md 11)',
     })
   }
 

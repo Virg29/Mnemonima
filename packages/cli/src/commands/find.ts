@@ -84,7 +84,11 @@ export function registerFindCommand(program: Command): void {
         '  id        direct lookup of one note id\n' +
         '  graph     walk the link graph outwards from one note',
     )
-    .requiredOption('-q, --query <text>', 'what to search for, in English')
+    // Accepted either way: `find "shaders"` is what everyone reaches for first,
+    // and an agent that guessed the positional form should not be corrected by
+    // an error when the meaning was never ambiguous.
+    .argument('[query]', 'what to search for, in English; the same as --query')
+    .option('-q, --query <text>', 'what to search for, in English')
     .option('-p, --project <name>', 'project name')
     .option('--mode <mode>', 'hybrid | semantic | lexical | exact | id | graph')
     .option('--from <id>', 'origin note for --mode graph; defaults to the query')
@@ -113,7 +117,16 @@ export function registerFindCommand(program: Command): void {
         'Exit codes: 1 nothing found, 2 bad request, 3 the query is not English.',
       ].join('\n'),
     )
-    .action(async (options: FindOptions) => {
+    .action(async (positional: string | undefined, options: FindOptions) => {
+      const query = options.query ?? positional
+
+      if (query === undefined || query.trim() === '') {
+        throw new BadRequestError('nothing to search for', {
+          details: { mode: options.mode ?? null },
+          hint: 'pass the query: `mnemonima find "how a fragment shader runs"`',
+        })
+      }
+
       const mode = options.mode === undefined ? undefined : parseMode(options.mode)
       const weights = options.weights === undefined ? undefined : parseWeights(options.weights)
 
@@ -121,7 +134,7 @@ export function registerFindCommand(program: Command): void {
 
       try {
         const request = {
-          query: options.query,
+          query,
           mode,
           weights,
           limit:
@@ -160,7 +173,7 @@ export function registerFindCommand(program: Command): void {
           context.project.db,
           context.config,
           resolved,
-          options.query,
+          query,
           {
             mode: request.mode,
             weights: request.weights,

@@ -97,9 +97,11 @@ export interface IndexConfig {
 export interface ExportConfig {
   enabled: boolean
   /**
-   * Where the markdown goes. Relative paths resolve inside the project's own
-   * `.mnemonima/` directory; an absolute path wins, which is how an existing
-   * vault elsewhere is kept up to date.
+   * Where the markdown goes, relative to the directory the project was created
+   * with — so `docs/notes` means `<project>/docs/notes`. The default says
+   * `.mnemonima/` out loud rather than hiding it in the resolution, because a
+   * relative path that silently landed somewhere else was how an export aimed
+   * at a repository ended up inside the ignored directory.
    */
   path: string
   debounceSec: number
@@ -182,7 +184,7 @@ export const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
   },
   links: { materializeBacklinks: false },
   index: { auto: true, debounceSec: 30 },
-  export: { enabled: true, path: 'export', debounceSec: 60, commit: true, push: false },
+  export: { enabled: true, path: '.mnemonima/export', debounceSec: 60, commit: true, push: false },
   daemon: { autoStart: true, idleTimeoutMin: 30, maxHotProjects: 2, projectIdleMin: 15, port: 0 },
   mcp: { allowDestructive: false },
 }

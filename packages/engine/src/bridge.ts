@@ -15,7 +15,6 @@ import {
   requireNote,
   setNoteTags,
 } from '@mnemonima/store'
-import { projectDataDir } from '@mnemonima/store'
 import type { Db } from '@mnemonima/store'
 import { exportFilename, idFromFilename, parseFile, renderFrontmatter } from './frontmatter.js'
 import { commitAll, commitMessage, isRepository, push as gitPush } from './git.js'
@@ -32,10 +31,13 @@ import { writeNewNote, writeNoteBody } from './notes.js'
  */
 
 export function exportDirectory(projectDir: string, config: ProjectConfig): string {
-  // Resolved against the project's own subdirectory, so the export sits beside
-  // the database it is a view of rather than in the operator's vault root. An
-  // absolute `export.path` still wins, which is how a vault elsewhere is fed.
-  return path.resolve(projectDataDir(projectDir), config.export.path)
+  // Resolved against the directory the operator named, not against our own
+  // subdirectory inside it. `docs/notes` has to mean `<project>/docs/notes`,
+  // which is what anyone writing it means and what the default says explicitly
+  // by carrying the `.mnemonima/` prefix itself. Resolving relative paths
+  // inside `.mnemonima/` sent an export the operator had pointed at their
+  // repository into the directory they had just told git to ignore.
+  return path.resolve(projectDir, config.export.path)
 }
 
 export interface ExportOptions {

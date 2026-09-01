@@ -464,6 +464,12 @@ Every write endpoint on the daemon schedules an export, and after a delay
 mnemonima: update SL-0042, SL-0007; create SL-0113
 ```
 
+- `export.path` resolves against the directory the project was created with, so
+  `docs/notes` means `<project>/docs/notes`. The default is the explicit
+  `.mnemonima/export` rather than a bare `export` that silently lands inside our
+  own subdirectory — a relative path that resolved somewhere other than where it
+  reads is how an export aimed at a repository ended up in the ignored
+  directory;
 - `git init` happens at `project add --git`;
 - **push is never automatic** — only `mnemonima export --push`, by hand;
 - commit messages are in English (§11);
@@ -914,37 +920,39 @@ the graph):
 
 Three layers, applied to notes, to queries and to writes over MCP alike.
 
-**Layer 1 — script gate (hard, cheap, deterministic).**
-The share of codepoints in non-Latin writing systems, through Unicode property
-escapes (`/\p{Script=Cyrillic}/u`, Han, Hiragana, Katakana, Hangul, Arabic,
-Hebrew, Devanagari, Thai, Armenian, Georgian). Any Cyrillic or CJK in the body →
+**One layer: the script gate.** Hard, cheap, deterministic. The share of
+codepoints in non-Latin writing systems, through Unicode property escapes
+(`/\p{Script=Cyrillic}/u`, Han, Hiragana, Katakana, Hangul, Arabic, Hebrew,
+Devanagari, Thai, Armenian, Georgian). Any Cyrillic or CJK in the body →
 **reject**.
 
 Important: the gate targets **writing systems**, not "non-ASCII". We allow
 `— – ' " × ° ≈ ½`, diacritics in proper nouns (`Gouraud`, `Björk`), emoji and
-mathematics. Otherwise we get false positives on perfectly normal English.
+mathematics. An ASCII-only rule would reject every one of them.
 
 **Greek is deliberately absent from the list**, though earlier drafts of this
 section named it. Single Greek letters are standard mathematical notation in
-technical notes — lambda and mu appear in our own configuration in §8.5 — so
-blocking the script would fire on every other note. Greek *prose* is caught by
-layer 2, which is where a language belongs when a single letter of it is
-legitimate English.
+technical notes — lambda and mu name parameters in our own configuration in
+§8.5 — so blocking the script would fire on every other note.
 
-**Layer 2 — language detection (soft).** `franc-min` on text longer than ~40
-characters. Not `eng` → a warning or a rejection, per the `language.gate:
-strict|warn|off` setting. Latin script that is not English (German, Spanish) is
-caught only here.
+**The exemption:** inside fenced code blocks the gate is relaxed by default
+(`gateCodeBlocks: false`) — code contains string literals in any language.
 
-**Layer 3 — exemptions.** Inside fenced code blocks the gate is relaxed by
-default (`gateCodeBlocks: false`) — code contains string literals in any
-language.
+**There was a statistical second layer, over `franc-min`, and it was removed.**
+It was meant to catch Latin-script prose that is not English. What it caught in
+practice was English: on the query *why does a particle break rendering when it
+opens its own buffer* the detector ranked Dutch first at 1.000 and did not rank
+English at all, and the gate read that absence as proof rather than as trigram
+statistics having nothing to work with at sixty-four characters. A search query
+is rarely longer than that, and search is the primary verb for the primary
+consumer. German prose now passes; the model handles it poorly but does not
+choke on it, which is a smaller harm than refusing a correct question.
 
 **Behaviour:**
 - **write** (CLI/UI/MCP) → refusal, naming the position of the violation;
 - **import** → the note is marked `lang != 'en'`, is not indexed, and shows up in
   `doctor`; the rest of the import does not fail;
-- **search** → a non-English query fails with `query must be in English`.
+- **search** → a non-Latin query fails with `query must be in English`.
 
 The gate protects retrieval quality (gte-small produces junk vectors for
 Russian), not an ideology. If a second language is ever needed, it will be a
@@ -1286,7 +1294,7 @@ did not own the write path**. Now it does. Below is where each item landed.
 | Indexing makes the machine unusable | `ceil(cores/2)` threads, `PRIORITY_BELOW_NORMAL`, batching, cancellable tasks |
 | Tuning the weights blind | `why` on every hit plus an eval harness with metrics (§8.6, §9) |
 | The vault creeping past 10k notes | The `VectorStore` interface is laid in; swapping in `hnswlib-node`/`sqlite-vec` is a local change |
-| Dead NLP dependencies | We implement YAKE ourselves (~150 lines); the only external ones are `wink-pos-tagger`, `wink-lemmatizer` and `franc-min` — all alive and small |
+| Dead NLP dependencies | We implement YAKE ourselves (~150 lines); the only external ones are `wink-pos-tagger` and `wink-lemmatizer` — both alive and small. `franc-min` was dropped with the statistical layer (§11) |
 
 ---
 

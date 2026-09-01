@@ -22,7 +22,6 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "franc-min": "^6.2.0",
     "mdast-util-to-string": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",

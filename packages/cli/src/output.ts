@@ -69,28 +69,54 @@ export function printTable(
   for (const row of rows) printLine(render(row))
 }
 
+/** How often a piped run prints a progress line. */
+const PIPED_INTERVAL_MS = 15_000
+
 /**
- * Single-line progress on stderr. Rewrites itself on a terminal and falls back
- * to nothing when the output is a pipe, so logs stay readable.
+ * Progress on stderr, in the two shapes the two readers need.
+ *
+ * On a terminal it is one line that rewrites itself. Through a pipe it used to
+ * be nothing at all — which is how a three-minute first index looked to an
+ * agent that ran `mnemonima index 2>&1 | tail`: no output, no way to tell a
+ * long run from a hung one. So a pipe gets an ordinary line every fifteen
+ * seconds instead. Rare enough not to bury the report that follows, frequent
+ * enough to be a sign of life.
  */
 export class Progress {
   readonly #enabled: boolean
+  readonly #interactive: boolean
   #lastLength = 0
+  #lastPrinted = 0
 
   constructor(enabled: boolean) {
-    this.#enabled = enabled && process.stderr.isTTY === true
+    this.#enabled = enabled
+    this.#interactive = process.stderr.isTTY === true
   }
 
   update(message: string): void {
     if (!this.#enabled) return
-    process.stderr.write(`\r${message.padEnd(this.#lastLength)}`)
-    this.#lastLength = message.length
+
+    if (this.#interactive) {
+      process.stderr.write(`\r${message.padEnd(this.#lastLength)}`)
+      this.#lastLength = message.length
+      return
+    }
+
+    const now = Date.now()
+    if (now - this.#lastPrinted < PIPED_INTERVAL_MS) return
+
+    this.#lastPrinted = now
+    process.stderr.write(`${message}\n`)
   }
 
   done(message?: string): void {
     if (!this.#enabled) return
-    process.stderr.write(`\r${' '.repeat(this.#lastLength)}\r`)
-    this.#lastLength = 0
+
+    if (this.#interactive) {
+      process.stderr.write(`\r${' '.repeat(this.#lastLength)}\r`)
+      this.#lastLength = 0
+    }
+
     if (message !== undefined) process.stderr.write(`${message}\n`)
   }
 }
