@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { BadRequestError } from '@mnemonima/core'
 import { DaemonClient, findRunning, spawnDaemon } from '@mnemonima/daemon'
 import { listEntries } from '@mnemonima/store'
 import { newBatchId } from '@mnemonima/engine'
@@ -47,13 +48,22 @@ function resolveProject(): string {
   const entries = listEntries()
   if (entries.length === 1) return entries[0]!.name
 
-  throw new Error(
-    entries.length === 0
-      ? 'no projects are registered: run `mnemonima project add "My Notes" --dir <path>` first'
-      : `pass -p <name> to choose a project — registered: ${entries
-          .map((entry) => entry.name)
-          .join(', ')}`,
-  )
+  // A `BadRequestError`, not a bare one: this is the operator's configuration,
+  // not our bug, and an agent client shows whatever the process printed. A
+  // stack trace under `internal error:` reads as "mnemonima is broken" to the
+  // one person who could fix it in ten seconds.
+  if (entries.length === 0) {
+    throw new BadRequestError('no projects are registered', {
+      details: { registered: [] },
+      hint: 'create one first: `mnemonima project add "My Notes" --dir <path>`',
+    })
+  }
+
+  const names = entries.map((entry) => entry.name)
+  throw new BadRequestError('more than one project is registered, so one has to be named', {
+    details: { registered: names },
+    hint: `add -p to the command, for example: mnemonima mcp -p "${names[0]}"`,
+  })
 }
 
 const project = resolveProject()
