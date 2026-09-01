@@ -1,0 +1,18 @@
+export * from './paths.js'
+export * from './db.js'
+export * from './migrate.js'
+export * from './meta.js'
+export * from './registry.js'
+export * from './project.js'
+export * from './notes.js'
+export * from './spaces.js'
+export * from './chunks.js'
+export * from './embeddings.js'
+export * from './metadata.js'
+export * from './links.js'
+export * from './terms.js'
+export * from './snapshots.js'
+
+// Test helper, exported so sibling packages can build an isolated MNEMONIMA_HOME
+// without reaching across package boundaries by relative path.
+export * from './testing.js'

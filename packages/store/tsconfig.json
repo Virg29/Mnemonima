@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@mnemonima/core": ["packages/core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

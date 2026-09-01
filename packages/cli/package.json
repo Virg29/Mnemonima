@@ -1,0 +1,22 @@
+{
+  "name": "mnemonima",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local hybrid search over a graph of markdown notes, built for AI agents",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "mnemonima": "./dist/index.js" },
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@mnemonima/core": "workspace:*",
+    "@mnemonima/daemon": "workspace:*",
+    "@mnemonima/engine": "workspace:*",
+    "@mnemonima/mcp": "workspace:*",
+    "@mnemonima/store": "workspace:*",
+    "commander": "^12.1.0"
+  }
+}

@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# test and coverage
+coverage/
+.vitest/
+
+# local project databases (SQLite is the source of truth: never commit one)
+*.db
+*.db-wal
+*.db-shm
+
+# downloaded model weights
+models/
+
+# editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# scratch
+.tmp/
+*.local.json
