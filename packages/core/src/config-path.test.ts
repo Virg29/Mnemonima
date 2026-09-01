@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { BadRequestError, defaultProjectConfig } from '@mnemonima/core'
-import { coerce, flatten, knownPaths, readPath, requirePath, writePath } from './config-path.js'
+import { BadRequestError } from './errors.js'
+import { DEFAULT_PROJECT_CONFIG, defaultProjectConfig } from './config.js'
+import {
+  applyPatch,
+  assertValue,
+  coerce,
+  flatten,
+  knownPaths,
+  readPath,
+  requirePath,
+  writePath,
+} from './config-path.js'
 
 describe('requirePath', () => {
   it('accepts a leaf', () => {
@@ -79,5 +89,76 @@ describe('flatten, readPath and writePath', () => {
 
   it('returns undefined for a path that does not exist', () => {
     expect(readPath(defaultProjectConfig(), ['nope', 'missing'])).toBeUndefined()
+  })
+})
+
+describe('assertValue', () => {
+  it('accepts a value of the type the setting has', () => {
+    expect(assertValue('search.hybridWeights.text', 0.7)).toBe(0.7)
+    expect(assertValue('keywords.autoEnabled', false)).toBe(false)
+    expect(assertValue('model.active', 'Xenova/gte-base')).toBe('Xenova/gte-base')
+  })
+
+  it('refuses a value of the wrong type, naming both', () => {
+    try {
+      assertValue('search.limits.resultK', '10')
+      expect.unreachable('should have thrown')
+    } catch (error) {
+      expect(error).toBeInstanceOf(BadRequestError)
+      expect((error as BadRequestError).message).toContain('number')
+      expect((error as BadRequestError).message).toContain('string')
+    }
+  })
+
+  it('refuses a group path, as `config set` does', () => {
+    expect(() => assertValue('search.limits', { resultK: 10 })).toThrow(BadRequestError)
+  })
+
+  it('refuses an unknown path', () => {
+    expect(() => assertValue('search.nonsense', 1)).toThrow(BadRequestError)
+  })
+
+  it('refuses a number that is not finite', () => {
+    // JSON cannot carry NaN, but a caller building the body in JS can.
+    expect(() => assertValue('search.hybridWeights.text', Number.NaN)).toThrow(BadRequestError)
+  })
+})
+
+describe('applyPatch', () => {
+  it('changes only what the patch names', () => {
+    const config = defaultProjectConfig()
+    const next = applyPatch(config, { 'search.hybridWeights.text': 0.8 })
+
+    expect(next.search.hybridWeights.text).toBe(0.8)
+    expect(next.search.hybridWeights.vector).toBe(config.search.hybridWeights.vector)
+    expect(next.search.limits.resultK).toBe(config.search.limits.resultK)
+  })
+
+  it('leaves the original untouched, so an override is not a save', () => {
+    const config = defaultProjectConfig()
+    applyPatch(config, { 'search.hybridWeights.text': 0.8 })
+
+    expect(config.search.hybridWeights.text).toBe(DEFAULT_PROJECT_CONFIG.search.hybridWeights.text)
+  })
+
+  it('applies several paths at once', () => {
+    const next = applyPatch(defaultProjectConfig(), {
+      'search.fusion.chunk': 0.9,
+      'search.graph.boost': 0,
+      'keywords.autoWeight': 0.5,
+    })
+
+    expect(next.search.fusion.chunk).toBe(0.9)
+    expect(next.search.graph.boost).toBe(0)
+    expect(next.keywords.autoWeight).toBe(0.5)
+  })
+
+  it('applies nothing when one path in the patch is bad', () => {
+    const config = defaultProjectConfig()
+
+    expect(() =>
+      applyPatch(config, { 'search.fusion.chunk': 0.9, 'search.fusion.nope': 1 }),
+    ).toThrow(BadRequestError)
+    expect(config.search.fusion.chunk).toBe(DEFAULT_PROJECT_CONFIG.search.fusion.chunk)
   })
 })

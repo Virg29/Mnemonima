@@ -1,4 +1,5 @@
-import { BadRequestError, defaultProjectConfig } from '@mnemonima/core'
+import { BadRequestError } from './errors.js'
+import { defaultProjectConfig } from './config.js'
 
 /**
  * Dotted-path access into the project configuration.
@@ -8,6 +9,12 @@ import { BadRequestError, defaultProjectConfig } from '@mnemonima/core'
  * refused rather than written. Silently replacing `search.limits` with a string
  * leaves every setting under it undefined, and `getConfig`'s merge preserves the
  * damage on every subsequent read.
+ *
+ * It lives in `core` rather than beside the command because three callers need
+ * the same rules: `mnemonima config set`, the daemon's config endpoint, and the
+ * search lab, which sends the same dotted paths as a per-query override so a
+ * weight can be tried without being saved. One mechanism, one validator — a
+ * second one would drift.
  */
 
 export function flatten(value: unknown, prefix = ''): [string, unknown][] {
@@ -79,6 +86,64 @@ export function requirePath(path: string): unknown {
   }
 
   return current
+}
+
+/**
+ * A set of settings to change, keyed by dotted path.
+ *
+ * The shape an HTTP caller sends, and the shape the search lab sends for a
+ * query it does not want to save.
+ */
+export type ConfigPatch = Readonly<Record<string, unknown>>
+
+function describeType(value: unknown): string {
+  if (Array.isArray(value)) return 'array'
+  return value === null ? 'null' : typeof value
+}
+
+/**
+ * Checks one already-parsed JSON value against the setting it is meant for.
+ *
+ * `coerce` is the sibling for a shell, where everything arrives as text. Here
+ * the types are real, so the job is to refuse a mismatch rather than to guess.
+ */
+export function assertValue(path: string, value: unknown): unknown {
+  const current = requirePath(path)
+  const expected = describeType(current)
+
+  if (describeType(value) !== expected) {
+    throw new BadRequestError(`${path} is a ${expected}, got ${describeType(value)}`, {
+      details: { path, value, expected },
+      hint: `the default is ${JSON.stringify(current)}`,
+    })
+  }
+
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new BadRequestError(`${path} must be a finite number`, {
+      details: { path, value },
+      hint: `the default is ${JSON.stringify(current)}`,
+    })
+  }
+
+  return value
+}
+
+/**
+ * Applies a patch to a copy, leaving the original untouched.
+ *
+ * The copy matters: the search lab overrides weights for one query, and a
+ * request that mutated the project's configuration on its way through would
+ * make "try this without saving" quietly false.
+ */
+export function applyPatch<T extends object>(config: T, patch: ConfigPatch): T {
+  const next = structuredClone(config) as Record<string, unknown>
+
+  for (const [path, value] of Object.entries(patch)) {
+    assertValue(path, value)
+    writePath(next, path.split('.'), value)
+  }
+
+  return next as T
 }
 
 /** Coerces the text a shell gives us into the type the existing value has. */

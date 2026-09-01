@@ -2,7 +2,7 @@ import { BadRequestError, defaultProjectConfig, resolveModel } from '@mnemonima/
 import { setConfig } from '@mnemonima/store'
 import { Command } from 'commander'
 import { openContext } from '../context.js'
-import { coerce, flatten, readPath, requirePath, writePath } from '../config-path.js'
+import { coerce, flatten, readPath, requirePath, writePath } from '@mnemonima/core'
 import { printJson, printLine, printNote, printTable } from '../output.js'
 
 /**
