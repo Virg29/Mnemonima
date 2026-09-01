@@ -69,6 +69,11 @@ export function registerEvalCommand(program: Command): void {
     .option('--tune', 'search for better weights instead of reporting the current ones')
     .option('--trials <n>', 'candidates to try with --tune', '60')
     .option('--objective <name>', 'what --tune maximises: ndcg | mrr | recall', 'ndcg')
+    .option(
+      '--holdout <fraction>',
+      'share of the set kept back to check the winner; 0 turns the check off',
+      '0.5',
+    )
     .option('--recall-k <n>', 'window for recall', '5')
     .option('--ndcg-k <n>', 'window for nDCG', '10')
     .option('--note <text>', 'label this run in the history')
@@ -93,6 +98,7 @@ export function registerEvalCommand(program: Command): void {
         objective: string
         recallK: string
         ndcgK: string
+        holdout: string
         note?: string
         json?: boolean
       }) => {
@@ -119,6 +125,7 @@ export function registerEvalCommand(program: Command): void {
               objective,
               recallK,
               ndcgK,
+              holdout: Number(options.holdout),
               json: options.json === true,
             })
             await resolved.embedder.dispose()
@@ -188,6 +195,7 @@ async function tune(
     objective: TuneObjective
     recallK: number
     ndcgK: number
+    holdout: number
     json: boolean
   },
 ): Promise<void> {
@@ -204,6 +212,7 @@ async function tune(
       objective: options.objective,
       recallK: options.recallK,
       ndcgK: options.ndcgK,
+      holdout: options.holdout,
       onTrial: (done, total, best) =>
         progress.update(`trial ${done}/${total}, best ${options.objective} ${best.toFixed(3)}`),
     },
@@ -220,28 +229,60 @@ async function tune(
 }
 
 function printTuneReport(report: TuneReport, objective: TuneObjective): void {
+  const { holdout } = report
+
   printLine(`Tried ${report.trials} candidates, maximising ${objective}`)
-  printTable(
-    ['', `RECALL`, 'MRR', 'NDCG'],
+
+  const rows = [
     [
-      [
-        'current',
-        report.baseline.metrics.recallAtK.toFixed(3),
-        report.baseline.metrics.mrr.toFixed(3),
-        report.baseline.metrics.ndcgAtK.toFixed(3),
-      ],
-      [
-        'best',
-        report.best.metrics.recallAtK.toFixed(3),
-        report.best.metrics.mrr.toFixed(3),
-        report.best.metrics.ndcgAtK.toFixed(3),
-      ],
+      `searched on (${report.baseline.metrics.queries})`,
+      report.baseline.metrics.recallAtK.toFixed(3),
+      report.baseline.metrics.mrr.toFixed(3),
+      report.baseline.metrics.ndcgAtK.toFixed(3),
     ],
-  )
+    [
+      'after tuning',
+      report.best.metrics.recallAtK.toFixed(3),
+      report.best.metrics.mrr.toFixed(3),
+      report.best.metrics.ndcgAtK.toFixed(3),
+    ],
+  ]
+
+  if (holdout !== null) {
+    rows.push(
+      [
+        `held back (${holdout.queries})`,
+        holdout.baseline.recallAtK.toFixed(3),
+        holdout.baseline.mrr.toFixed(3),
+        holdout.baseline.ndcgAtK.toFixed(3),
+      ],
+      [
+        'after tuning',
+        holdout.best.recallAtK.toFixed(3),
+        holdout.best.mrr.toFixed(3),
+        holdout.best.ndcgAtK.toFixed(3),
+      ],
+    )
+  }
+
+  printTable(['', 'RECALL', 'MRR', 'NDCG'], rows)
+
+  if (holdout !== null) {
+    printLine()
+    printNote(
+      'the first pair is the queries the search was scored against, so it flatters itself; ' +
+        'the second is the ones it never saw, and only that one is evidence',
+    )
+  }
 
   if (!report.improved) {
     printLine()
-    printNote('nothing beat the settings you already have, which is a result too')
+    printNote(
+      holdout === null
+        ? 'nothing beat the settings you already have, which is a result too'
+        : 'the winning weights did not beat the current ones on the queries held back: ' +
+          'the gain above was the search fitting the half it was scored on',
+    )
     return
   }
 
@@ -256,7 +297,7 @@ function printTuneReport(report: TuneReport, objective: TuneObjective): void {
     printNote(report.warning)
   }
 
-  if (report.best.metrics.queries < NOISY_BELOW) {
+  if (report.baseline.metrics.queries + (holdout?.queries ?? 0) < NOISY_BELOW) {
     printNote('write more queries before trusting this: a small set rewards luck')
   }
 }

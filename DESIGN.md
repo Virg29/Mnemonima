@@ -821,14 +821,28 @@ last query you happened to check.
 ```
 
 `mnemonima eval -p proj` runs the set and computes `recall@5`, `MRR`, `nDCG@10`
-and `p50/p95` latency. `mnemonima eval --tune` does a random/grid search over the
-weights (`hybridWeights`, `strategyWeights`, `fusion`, `boost`, `graph.boost`)
-and prints the best configuration with the delta against the current one. Run
-results are written to the database, and the UI shows the history — whether an
-edit made things better or worse.
+and `p50/p95` latency. `mnemonima eval --tune` searches the weights
+(`hybridWeights`, `strategyWeights`, `fusion`, `boost`, `graph.boost`) and prints
+the best configuration with the delta against the current one. Run results are
+written to the database, and the UI shows the history — whether an edit made
+things better or worse.
 
-The UI warns: a set younger than 20 queries makes the metrics noisy, too early to
-trust them.
+**Tuning holds half the set back, and the half it held back is the only number
+that counts.** Every `stride`-th query is kept out of the search and used once,
+at the end, to score the winner; the report prints both pairs and decides on the
+second. This is not a precaution, it is the finding: on the first real project,
+tuning reached a perfect 1.000 on the half it was scored against — twice, in
+both directions — and moved the other half by nothing the first time and
+*downwards* the second. Every point of the apparent win was the search fitting
+the queries it was measured on. A `--tune` that reported only the first pair
+would be a feature for producing wrong conclusions.
+
+Taking every other query rather than the tail matters: a set is written topic by
+topic, so holding back the last half would measure whether weights transfer
+between subjects instead of whether they transfer at all.
+
+The CLI and the UI both warn that a set under 20 queries makes the metrics noisy,
+and that both halves of a small split can be luck.
 
 ---
 

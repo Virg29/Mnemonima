@@ -260,12 +260,20 @@ export interface EvalReport {
   warning: string | null
 }
 
+export interface TuneHoldout {
+  queries: number
+  baseline: EvalMetrics
+  best: EvalMetrics
+  improved: boolean
+}
+
 export interface TuneReport {
   tuned: true
   objective: string
   trials: number
   baseline: { metrics: EvalMetrics; score: number }
   best: { metrics: EvalMetrics; score: number }
+  holdout: TuneHoldout | null
   changes: { path: string; from: number; to: number }[]
   improved: boolean
   warning: string | null
@@ -382,7 +390,7 @@ export const api = {
 
   runEval: (
     project: string,
-    body: { tune?: boolean; trials?: number },
+    body: { tune?: boolean; trials?: number; holdout?: number },
   ): Promise<EvalReport | TuneReport> => call('POST', `/projects/${encode(project)}/eval`, body),
 
   terms: (project: string): Promise<{ terms: VocabularyEntry[]; candidates: VocabularyEntry[] }> =>

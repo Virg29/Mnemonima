@@ -253,6 +253,7 @@ export async function runProjectEval(
           : 'ndcg',
         recallK,
         ndcgK,
+        holdout: typeof body['holdout'] === 'number' ? body['holdout'] : 0.5,
         index,
       },
     )

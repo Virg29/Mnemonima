@@ -169,30 +169,54 @@ function tuneCard(report: TuneReport): HTMLElement {
     .map((change) => `mnemonima config set ${change.path} ${change.to}`)
     .join('\n')
 
+  const holdout = report.holdout
+
   return el('div', { class: 'card' }, [
     el('h2', { text: `Tuned over ${report.trials} candidates` }),
+
+    el('h2', { text: `Scored against (${report.baseline.metrics.queries} queries)` }),
+    el('p', { class: 'hint', text: 'Flattering by construction: this is what it optimised.' }),
     el('div', { class: 'metrics' }, [
-      metric('recall now', report.baseline.metrics.recallAtK.toFixed(3)),
-      metric('best', report.best.metrics.recallAtK.toFixed(3)),
-      metric('MRR now', report.baseline.metrics.mrr.toFixed(3)),
-      metric('best', report.best.metrics.mrr.toFixed(3)),
-      metric('nDCG now', report.baseline.metrics.ndcgAtK.toFixed(3)),
-      metric('best', report.best.metrics.ndcgAtK.toFixed(3)),
+      metric('nDCG before', report.baseline.metrics.ndcgAtK.toFixed(3)),
+      metric('after', report.best.metrics.ndcgAtK.toFixed(3)),
+      metric('MRR before', report.baseline.metrics.mrr.toFixed(3)),
+      metric('after', report.best.metrics.mrr.toFixed(3)),
     ]),
+
+    ...(holdout === null
+      ? [
+          el('p', {
+            class: 'hint warn',
+            text: 'No holdout was kept, so the numbers above are not evidence of anything.',
+          }),
+        ]
+      : [
+          el('h2', { text: `Held back (${holdout.queries} queries)` }),
+          el('p', { class: 'hint', text: 'Never seen by the search. Only this pair is evidence.' }),
+          el('div', { class: 'metrics' }, [
+            metric('nDCG before', holdout.baseline.ndcgAtK.toFixed(3)),
+            metric('after', holdout.best.ndcgAtK.toFixed(3)),
+            metric('MRR before', holdout.baseline.mrr.toFixed(3)),
+            metric('after', holdout.best.mrr.toFixed(3)),
+          ]),
+        ]),
+
     ...(report.improved
       ? [
           el('p', {
             class: 'hint',
-            text:
-              'Nothing has been saved. These weights were chosen against the same queries they ' +
-              'are scored on, so apply them only if the win survives a set you did not tune on.',
+            text: 'The win survived the queries held back. Nothing has been saved:',
           }),
           el('pre', {}, [el('code', { text: commands })]),
         ]
       : [
           el('p', {
             class: 'hint ok',
-            text: 'Nothing beat the settings you already have, which is a result too.',
+            text:
+              holdout === null
+                ? 'Nothing beat the settings you already have, which is a result too.'
+                : 'The winning weights did not beat the current ones on the queries held back: ' +
+                  'the gain above was the search fitting the half it was scored on.',
           }),
         ]),
     ...(report.warning === null ? [] : [el('p', { class: 'hint warn', text: report.warning })]),

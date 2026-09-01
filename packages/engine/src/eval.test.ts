@@ -10,7 +10,7 @@ import type { ResolvedEmbedder } from './embedder.js'
 import { evalSetPath, readQuerySet, runEval } from './eval.js'
 import { indexProject } from './indexer.js'
 import { writeNewNote } from './notes.js'
-import { tuneWeights } from './tune.js'
+import { splitQueries, tuneWeights } from './tune.js'
 
 /**
  * The harness, against a small real corpus rather than stubs: the point of
@@ -240,14 +240,16 @@ describe('weight tuning', () => {
     for (const change of report.changes) expect(change.from).not.toBe(change.to)
   })
 
-  it('says that a small set overfits', async () => {
+  it('cannot hold anything back from a set this small, and says so', async () => {
+    // Two queries cannot be split into a search half and a check half, so the
+    // report has to admit that its own number proves nothing.
     const report = await tuneWeights(db, config, resolved, readQuerySet(projectDir), 'Shader Lab', {
       trials: 2,
       random: sequence(),
     })
 
-    expect(report.warning).toContain('2 queries')
-    expect(report.warning).toContain('verify a win before saving')
+    expect(report.holdout).toBeNull()
+    expect(report.warning).toContain('not evidence')
   })
 })
 
@@ -259,3 +261,115 @@ function sequence(): () => number {
     return state
   }
 }
+
+describe('splitting a set for a holdout', () => {
+  const queries = Array.from({ length: 12 }, (_, index) => `q${index + 1}`)
+
+  it('takes every other query rather than the tail', () => {
+    // A set is written topic by topic, so holding back the last half would
+    // measure whether weights transfer between topics, not whether they
+    // transfer at all.
+    const { tune, holdout } = splitQueries(queries, 0.5)
+
+    expect(tune).toEqual(['q1', 'q3', 'q5', 'q7', 'q9', 'q11'])
+    expect(holdout).toEqual(['q2', 'q4', 'q6', 'q8', 'q10', 'q12'])
+  })
+
+  it('holds back less when asked for less', () => {
+    const { tune, holdout } = splitQueries(queries, 0.25)
+
+    expect(holdout).toHaveLength(3)
+    expect(tune).toHaveLength(9)
+  })
+
+  it('is deterministic, so a run can be repeated', () => {
+    expect(splitQueries(queries, 0.5)).toEqual(splitQueries(queries, 0.5))
+  })
+
+  it('holds nothing back when switched off or when there is too little', () => {
+    expect(splitQueries(queries, 0).holdout).toEqual([])
+    expect(splitQueries(['a', 'b', 'c'], 0.5).holdout).toEqual([])
+    expect(splitQueries(['a', 'b', 'c'], 0.5).tune).toHaveLength(3)
+  })
+})
+
+describe('tuning with a holdout', () => {
+  let sandbox: Sandbox
+  let db: Db
+  let config: ProjectConfig
+  let projectDir: string
+  let resolved: ResolvedEmbedder
+
+  beforeEach(async () => {
+    sandbox = createSandbox()
+    projectDir = path.join(sandbox.projects, 'sl')
+
+    const project = createProject({ name: 'Shader Lab', dir: projectDir })
+    db = project.db
+
+    config = getConfig(db)
+    config.model.active = TEST_MODEL_ID
+    setConfig(db, config)
+
+    for (const body of NOTES) writeNewNote(db, config, body, { author: 'test' })
+
+    resolved = await createEmbedder(config)
+    await indexProject(db, config, resolved)
+
+    const file = evalSetPath(projectDir)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(
+      file,
+      [
+        '- q: "a fragment shader writes a colour per pixel"',
+        '  relevant: [SL-0001]',
+        '- q: "which pixels a triangle covers"',
+        '  relevant: [SL-0002]',
+        '- q: "sixteen byte boundary padding"',
+        '  relevant: [SL-0003]',
+        '- q: "raised beds drain after rain"',
+        '  relevant: [SL-0004]',
+        '- q: "the vertex stage runs once per vertex"',
+        '  relevant: [SL-0002]',
+        '- q: "standard layout pads every member"',
+        '  relevant: [SL-0003]',
+      ].join('\n'),
+    )
+  })
+
+  afterEach(async () => {
+    await resolved.embedder.dispose()
+    db.close()
+    sandbox.cleanup()
+  })
+
+  const tune = (holdout: number): ReturnType<typeof tuneWeights> =>
+    tuneWeights(db, config, resolved, readQuerySet(projectDir), 'Shader Lab', {
+      trials: 4,
+      holdout,
+      random: sequence(),
+    })
+
+  it('scores the winner on queries the search never saw', async () => {
+    const report = await tune(0.5)
+
+    expect(report.holdout).not.toBeNull()
+    expect(report.holdout?.queries).toBe(3)
+    // The two halves together are the whole set, and neither is empty.
+    expect(report.baseline.metrics.queries).toBe(3)
+  })
+
+  it('reports improvement from the holdout, not from the search', async () => {
+    const report = await tune(0.5)
+
+    // The number that flatters itself must not be the one that decides.
+    expect(report.improved).toBe(report.holdout?.improved)
+  })
+
+  it('says plainly when there is no holdout to trust', async () => {
+    const report = await tune(0)
+
+    expect(report.holdout).toBeNull()
+    expect(report.warning).toContain('not evidence')
+  })
+})
