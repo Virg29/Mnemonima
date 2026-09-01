@@ -14,7 +14,9 @@ import {
   registryLocation,
   removeProject,
 } from '@mnemonima/store'
+import { DaemonClient } from '@mnemonima/daemon'
 import { Command } from 'commander'
+import { currentDaemon } from '../daemon-link.js'
 import { printFields, printJson, printLine, printNote, printTable } from '../output.js'
 
 interface AddOptions {
@@ -62,6 +64,24 @@ function describeProject(entry: {
     return { ...base, ...projectStats(db) }
   } finally {
     db.close()
+  }
+}
+
+/**
+ * Asks a running daemon to drop the project before its files are deleted.
+ *
+ * Failure here is not fatal: no daemon, or one that will not answer, just means
+ * the delete goes ahead and reports for itself if the file is still held.
+ */
+async function releaseFromDaemon(name: string, quiet: boolean): Promise<void> {
+  try {
+    const running = await currentDaemon()
+    if (running === null) return
+
+    const { unloaded } = await new DaemonClient(running).unload(name)
+    if (unloaded && !quiet) printNote(`unloaded "${name}" from the daemon first`)
+  } catch {
+    // Nothing to do: removeProject says what is wrong if the file is locked.
   }
 }
 
@@ -180,7 +200,7 @@ export function registerProjectCommands(program: Command): void {
     .option('-y, --yes', 'confirm deletion of data')
     .option('--json', 'machine readable output')
     .description('unregister a project; the database is kept unless --delete-data is given')
-    .action((name: string, options: RemoveOptions) => {
+    .action(async (name: string, options: RemoveOptions) => {
       if (options.deleteData === true && options.yes !== true) {
         throw new BadRequestError(
           '--delete-data permanently removes the project database',
@@ -190,6 +210,12 @@ export function registerProjectCommands(program: Command): void {
           },
         )
       }
+
+      // The daemon holds the database open, and on Windows an open file cannot
+      // be unlinked. Asking it to let go first is what the operator would be
+      // told to do anyway, so the command does it rather than failing and
+      // saying so.
+      if (options.deleteData === true) await releaseFromDaemon(name, options.json === true)
 
       const result = removeProject(name, { deleteData: options.deleteData })
 

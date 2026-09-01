@@ -225,39 +225,84 @@ export interface RemoveProjectResult {
   readonly deletedFiles: string[]
 }
 
+/** Errno values a held-open file produces, across platforms. */
+const FILE_IN_USE = new Set(['EBUSY', 'EPERM', 'EACCES'])
+
+/**
+ * Turns "somebody has this open" into an answer, or returns null when the
+ * failure is not that and belongs to whoever can actually explain it.
+ *
+ * A database the daemon holds cannot be unlinked on Windows. Reporting that as
+ * an internal error told the operator it was our bug, when it was a running
+ * process they could stop with one command.
+ *
+ * Separate from the deletion so it can be tested: whether an open handle
+ * actually blocks an unlink is a property of the platform — Windows allows it
+ * for a file opened normally and refuses it for the one SQLite holds — so the
+ * condition cannot be reproduced on demand, but the translation can.
+ */
+export function fileInUseError(
+  error: unknown,
+  file: string,
+  project: string,
+): BadRequestError | null {
+  const code = (error as NodeJS.ErrnoException).code ?? ''
+  if (!FILE_IN_USE.has(code)) return null
+
+  return new BadRequestError(`${file} is open in another process`, {
+    details: { project, file, code },
+    hint:
+      `the daemon is probably holding it: run \`mnemonima daemon unload "${project}"\`` +
+      ' (or `mnemonima daemon stop`) and try again',
+  })
+}
+
+function deleteFile(file: string, project: string): boolean {
+  if (!fs.existsSync(file)) return false
+
+  try {
+    fs.rmSync(file)
+    return true
+  } catch (error) {
+    throw fileInUseError(error, file, project) ?? error
+  }
+}
+
 export function removeProject(
   name: string,
   options: RemoveProjectOptions = {},
 ): RemoveProjectResult {
-  const entry = removeEntry(name)
+  // Looked up, not removed, until the files are gone. Unregistering first and
+  // then failing to delete left the project out of the registry with its
+  // database still on disk — unreachable, and invisible to the command that
+  // would have retried.
+  const entry = requireEntry(name)
   const deletedFiles: string[] = []
 
   if (options.deleteData === true) {
     const dbPath = projectDbPath(entry.dir)
     for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-      if (fs.existsSync(file)) {
-        fs.rmSync(file)
-        deletedFiles.push(file)
-      }
+      if (deleteFile(file, entry.name)) deletedFiles.push(file)
     }
 
     const data = projectDataDir(entry.dir)
-    if (!fs.existsSync(data)) return { entry, deletedFiles }
 
-    // The `.gitignore` is ours, written when the project was created, so it
-    // goes with the data rather than keeping the directory alive forever.
-    const ignore = path.join(data, '.gitignore')
-    if (fs.readdirSync(data).length === 1 && fs.existsSync(ignore)) {
-      fs.rmSync(ignore)
-      deletedFiles.push(ignore)
+    if (fs.existsSync(data)) {
+      // The `.gitignore` is ours, written when the project was created, so it
+      // goes with the data rather than keeping the directory alive forever.
+      const ignore = path.join(data, '.gitignore')
+      if (fs.readdirSync(data).length === 1 && fs.existsSync(ignore)) {
+        if (deleteFile(ignore, entry.name)) deletedFiles.push(ignore)
+      }
+
+      // Only when nothing else is left: an export beside the database may be a
+      // git repository with history, and deleting a database is not consent to
+      // delete that.
+      if (fs.readdirSync(data).length === 0) fs.rmdirSync(data)
     }
-
-    // Only when nothing else is left: an export beside the database may be a
-    // git repository with history, and deleting a database is not consent to
-    // delete that.
-    if (fs.readdirSync(data).length === 0) fs.rmdirSync(data)
   }
 
+  removeEntry(name)
   return { entry, deletedFiles }
 }
 

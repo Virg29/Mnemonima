@@ -2,7 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BadRequestError, LanguageGateError, NotFoundError } from '@mnemonima/core'
-import { createProject, openProject, projectStats, removeProject } from './project.js'
+import {
+  createProject,
+  fileInUseError,
+  openProject,
+  projectStats,
+  removeProject,
+} from './project.js'
 import { getMeta, META, nextNoteId } from './meta.js'
 import {
   PROJECT_DATA_DIR,
@@ -365,5 +371,64 @@ describe('keeping out of the operator git repository', () => {
     project.db.close()
 
     expect(fs.readFileSync(path.join(data, '.gitignore'), 'utf8')).toBe('*\n!export/\n')
+  })
+})
+
+describe('removing a project whose files are held open', () => {
+  let sandbox: Sandbox
+
+  beforeEach(() => {
+    sandbox = createSandbox()
+  })
+
+  afterEach(() => {
+    sandbox.cleanup()
+  })
+
+  it('explains a locked file instead of reporting a bug of ours', () => {
+    // Whether an open handle blocks an unlink is the platform's business —
+    // Windows allows it for a normally opened file and refuses it for the one
+    // SQLite holds — so the translation is what gets tested, not the lock.
+    for (const code of ['EBUSY', 'EPERM', 'EACCES']) {
+      const translated = fileInUseError({ code }, 'C:/kb/.mnemonima/mnemonima.db', 'Shader Lab')
+
+      expect(translated).toBeInstanceOf(BadRequestError)
+      expect(translated?.exitCode).toBe(2)
+      expect(translated?.hint).toContain('daemon unload "Shader Lab"')
+    }
+  })
+
+  it('leaves a failure that is not ours to explain alone', () => {
+    expect(fileInUseError({ code: 'ENOSPC' }, 'x', 'Shader Lab')).toBeNull()
+    expect(fileInUseError(new Error('something else'), 'x', 'Shader Lab')).toBeNull()
+  })
+
+  it('unregisters only after the files are gone', () => {
+    const dir = path.join(sandbox.projects, 'free')
+    const project = createProject({ name: 'Shader Lab', dir })
+    project.db.close()
+
+    const result = removeProject('Shader Lab', { deleteData: true })
+
+    expect(result.deletedFiles.length).toBeGreaterThan(0)
+    expect(listEntries().map((entry) => entry.name)).not.toContain('Shader Lab')
+    expect(fs.existsSync(projectDbPath(dir))).toBe(false)
+  })
+
+  it('keeps the entry when the data could not be deleted', () => {
+    const dir = path.join(sandbox.projects, 'held')
+    const project = createProject({ name: 'Shader Lab', dir })
+    project.db.close()
+
+    // A directory where the database file should be: rmSync refuses it, which
+    // stands in for any deletion that cannot go through.
+    fs.rmSync(projectDbPath(dir))
+    fs.mkdirSync(projectDbPath(dir))
+
+    expect(() => removeProject('Shader Lab', { deleteData: true })).toThrow()
+
+    // The half that matters: still registered, so it can be reached and retried
+    // rather than orphaned on disk with no command that knows about it.
+    expect(listEntries().map((entry) => entry.name)).toContain('Shader Lab')
   })
 })
