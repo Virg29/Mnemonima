@@ -527,3 +527,23 @@ a:hover {
     grid-column: 1 / -1;
   }
 }
+
+/* ---- eval ------------------------------------------------------------- */
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 4px 0 12px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-value {
+  font-family: var(--mono);
+  font-size: 20px;
+  line-height: 1.2;
+}

@@ -1,6 +1,7 @@
 import './styles.css'
 import { api } from './api.js'
 import { App, failure } from './app.js'
+import { evalScreen } from './views/eval.js'
 import { graphScreen } from './views/graph.js'
 import { healthScreen } from './views/health.js'
 import { labScreen } from './views/lab.js'
@@ -31,6 +32,7 @@ if (root !== null) {
       .add(noteScreen())
       .add(termsScreen())
       .add(spacesScreen())
+      .add(evalScreen())
       .add(settingsScreen())
       .add(healthScreen())
 

@@ -1,7 +1,7 @@
 # mnemonima — design document (v0.2)
 
-> Status: **stages 0–8 shipped; stage 9 (eval) is next.** See §15 for the
-> board and §18 for where the work stands.
+> Status: **stages 0–9 shipped; stage 10+ (post-MVP) is what is left.** See
+> §15 for the board and §18 for where the work stands.
 > Changes relative to v0.1 record the decisions taken in discussion — see §1.2.
 > This is the specification *and* the roadmap, so it is kept consistent with the
 > state of the repository: where a section describes something that was later
@@ -1061,11 +1061,12 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
 `mnemonima ui [-p proj]` brings the daemon up and opens
 `http://127.0.0.1:<port>/ui?token=…`.
 
-> **Status.** Built, except the Eval screen, which waits for stage 9 to have
-> anything to show. The UI is its own Vite package (`packages/ui`) and the
+> **Status.** Built. The UI is its own Vite package (`packages/ui`) and the
 > daemon serves the bundle; sigma.js, CodeMirror 6 and the drag-to-link dialog
-> are all here. One thing below is not: **there is no SSE progress on a space
-> build.** The daemon has no event stream, so a build reports when it finishes.
+> are all here, and so is the settings screen, which is not in the list below
+> because it was not foreseen. One thing below is not built: **there is no SSE
+> progress on a space build.** The daemon has no event stream, so a build
+> reports when it finishes.
 
 1. **Projects** — the registry, statistics, adding a project.
 2. **Graph** — a force-directed graph. **graphology + sigma.js** (WebGL, handles
@@ -1235,9 +1236,9 @@ and that is a perfectly normal outcome.
 | **5. Daemon** | **done** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
 | **6. Markdown bridge** | **done** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
 | **7. MCP** | **done** | nineteen tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
-| **8. UI** | **done**, minus the eval screen | projects → graph → editor → search lab → terms → spaces → settings → health | tuning the weights live with `why` |
-| **9. Eval** | **next** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
-| **10+. Post-MVP** | planned | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
+| **8. UI** | **done** | projects → graph → editor → search lab → terms → spaces → eval → settings → health | tuning the weights live with `why` |
+| **9. Eval** | **done** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
+| **10+. Post-MVP** | **next** | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
 
 Stages 1–3 give a working search engine; 5–7 a working tool for an agent; 8–9
 manageable quality.
@@ -1354,8 +1355,17 @@ with nineteen tools, every write attributed, batched and undoable.
 tuning every weight live against a warm index and the graph creating a link by
 dragging.
 
-**Next** is stage 9, which is what turns "this feels better" into a number.
-Until it exists, every weight in §8.5 is a considered guess rather than a
-measurement — and so is `search.limits.minSimilarity`, which currently filters
-nothing. The eval screen of §13 is deliberately not built for the same reason:
-there is nothing yet for it to show.
+… and the eval harness, which turned the weights of §8.5 from a considered
+guess into something measured. The first real set — 24 queries over a 31-note
+project — scores recall@5 1.000, MRR 0.972, nDCG@10 0.969 on the defaults, and
+its first run corrected the *set* rather than the engine: a query about particle
+buffers was answered by a note the set had not credited, and the note was right.
+
+**Next** is stage 10: `adopt` (§14.1) and the cross-encoder (§14.2). The first
+has a concrete case waiting — a real project imported 29 notes whose 118
+cross-references were ordinary markdown links, all of which came in dangling and
+had to be relinked by hand.
+
+`search.limits.minSimilarity` is still the guess it always was. It can now be
+chosen by measurement rather than argument, which is a different sentence from
+"it has been".

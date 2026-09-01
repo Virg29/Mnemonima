@@ -14,6 +14,7 @@ import { registerNoteCommands } from './commands/note.js'
 import { registerProjectCommands } from './commands/project.js'
 import { registerTermCommands } from './commands/terms.js'
 import { registerUndoCommands } from './commands/undo.js'
+import { registerEvalCommand } from './commands/eval.js'
 import { registerUiCommand } from './commands/ui.js'
 
 const require = createRequire(import.meta.url)
@@ -54,6 +55,7 @@ registerFindCommand(program)
 registerModelCommands(program)
 registerTermCommands(program)
 registerDaemonCommands(program)
+registerEvalCommand(program)
 registerUiCommand(program)
 registerBridgeCommands(program)
 registerUndoCommands(program)

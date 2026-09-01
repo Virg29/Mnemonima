@@ -227,6 +227,70 @@ export interface ModelDescriptor {
   note: string
 }
 
+export interface QueryOutcome {
+  query: string
+  returned: string[]
+  relevant: string[]
+  recall: number | null
+  reciprocalRank: number | null
+  ndcg: number | null
+  negatives: number
+  tookMs: number
+}
+
+export interface EvalMetrics {
+  queries: number
+  recallAtK: number
+  mrr: number
+  ndcgAtK: number
+  negatives: number
+  p50Ms: number
+  p95Ms: number
+}
+
+export interface EvalReport {
+  tuned: false
+  project: string
+  set: string
+  recallK: number
+  ndcgK: number
+  metrics: EvalMetrics
+  outcomes: QueryOutcome[]
+  unknownIds: string[]
+  warning: string | null
+}
+
+export interface TuneReport {
+  tuned: true
+  objective: string
+  trials: number
+  baseline: { metrics: EvalMetrics; score: number }
+  best: { metrics: EvalMetrics; score: number }
+  changes: { path: string; from: number; to: number }[]
+  improved: boolean
+  warning: string | null
+}
+
+export interface EvalRunRow {
+  id: number
+  queries: number
+  recall: number
+  mrr: number
+  ndcg: number
+  p50Ms: number
+  p95Ms: number
+  note: string | null
+  createdAt: number
+}
+
+export interface EvalView {
+  project: string
+  set: string
+  exists: boolean
+  queries: number
+  history: EvalRunRow[]
+}
+
 export interface VocabularyEntry {
   term: string
   lemma: string
@@ -312,6 +376,14 @@ export const api = {
     call('GET', `/projects/${encode(project)}/batches`),
 
   models: (): Promise<{ models: ModelDescriptor[] }> => call('GET', '/models'),
+
+  evalHistory: (project: string): Promise<EvalView> =>
+    call('GET', `/projects/${encode(project)}/eval`),
+
+  runEval: (
+    project: string,
+    body: { tune?: boolean; trials?: number },
+  ): Promise<EvalReport | TuneReport> => call('POST', `/projects/${encode(project)}/eval`, body),
 
   terms: (project: string): Promise<{ terms: VocabularyEntry[]; candidates: VocabularyEntry[] }> =>
     call('GET', `/projects/${encode(project)}/terms`),

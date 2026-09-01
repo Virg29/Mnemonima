@@ -5,6 +5,8 @@ import { openDatabase } from './db.js'
 import type { Db } from './db.js'
 import { latestSchemaVersion, migrate, schemaVersion } from './migrate.js'
 import { createSandbox } from './testing.js'
+import { listEvalRuns, recordEvalRun } from './evals.js'
+import type { EvalRunRow } from './evals.js'
 import type { Sandbox } from './testing.js'
 
 describe('migrations', () => {
@@ -30,7 +32,9 @@ describe('migrations', () => {
 
     expect(result.from).toBe(0)
     expect(result.to).toBe(latestSchemaVersion())
-    expect(result.applied).toEqual(['1-init'])
+    // Named rather than counted, so adding one is a deliberate edit here and
+    // an accidental reordering fails instead of passing quietly.
+    expect(result.applied).toEqual(['1-init', '2-eval'])
     expect(schemaVersion(db)).toBe(latestSchemaVersion())
   })
 
@@ -117,5 +121,66 @@ describe('migrations', () => {
         .prepare('INSERT INTO links (src, dst, anchor, kind, resolved) VALUES (?, ?, ?, ?, ?)')
         .run('SL-0001', 'EXTERNAL-9999', '', 'wikilink', 0),
     ).not.toThrow()
+  })
+})
+
+describe('the eval run log', () => {
+  let sandbox: Sandbox
+  let db: Db
+
+  beforeEach(() => {
+    sandbox = createSandbox()
+    db = openDatabase(path.join(sandbox.projects, 'runs.db'))
+    migrate(db)
+  })
+
+  afterEach(() => {
+    db.close()
+    sandbox.cleanup()
+  })
+
+  const run = (ndcg: number, note: string | null = null): EvalRunRow =>
+    recordEvalRun(db, {
+      spaceId: 'space-1',
+      queries: 24,
+      recallK: 5,
+      ndcgK: 10,
+      recall: 0.8,
+      mrr: 0.7,
+      ndcg,
+      p50Ms: 31.4,
+      p95Ms: 88.6,
+      config: { search: { hybridWeights: { text: 0.5, vector: 0.5 } } },
+      metrics: { negatives: 0 },
+      note,
+    })
+
+  it('keeps the configuration that produced the numbers', () => {
+    // A metric without the weights behind it cannot be reproduced or argued
+    // with, which is the only thing a history is for.
+    const row = run(0.64, 'baseline')
+
+    expect(row.ndcg).toBe(0.64)
+    expect(row.note).toBe('baseline')
+    expect((row.config as { search: { hybridWeights: { text: number } } }).search.hybridWeights.text)
+      .toBe(0.5)
+  })
+
+  it('rounds latency to whole milliseconds', () => {
+    expect(run(0.5).p50Ms).toBe(31)
+    expect(run(0.5).p95Ms).toBe(89)
+  })
+
+  it('lists newest first, which is how the question is asked', () => {
+    run(0.60, 'before')
+    run(0.71, 'after')
+
+    const rows = listEvalRuns(db, 10)
+    expect(rows.map((row) => row.note)).toEqual(['after', 'before'])
+  })
+
+  it('honours the limit', () => {
+    for (let index = 0; index < 5; index += 1) run(0.5)
+    expect(listEvalRuns(db, 2)).toHaveLength(2)
   })
 })

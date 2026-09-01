@@ -18,6 +18,8 @@ import {
   activateSpace,
   createExportDirectory,
   readBatches,
+  readEval,
+  runProjectEval,
   readConfig,
   readDoctor,
   readRevisions,
@@ -514,6 +516,25 @@ export function createServer(options: ServerOptions): {
   app.post('/projects/:name/export/directory', (context) =>
     context.json(createExportDirectory(pool.acquire(context.req.param('name')))),
   )
+
+  app.get('/projects/:name/eval', (context) => {
+    const limit = Number(context.req.query('limit') ?? '20')
+    return context.json(
+      readEval(pool.acquire(context.req.param('name')), Number.isFinite(limit) ? limit : 20),
+    )
+  })
+
+  app.post('/projects/:name/eval', async (context) => {
+    const project = pool.acquire(context.req.param('name'))
+    const body = await readBody(context)
+
+    // The same warm index every search uses: a tuning run scores dozens of
+    // candidates, and rebuilding for each would make it unusable.
+    const resolved = await pool.embedder(project)
+    const index = await pool.index(project)
+
+    return context.json(await runProjectEval(project, resolved, index, body))
+  })
 
   app.get('/projects/:name/spaces', (context) =>
     context.json(readSpaces(pool.acquire(context.req.param('name')))),

@@ -4,6 +4,8 @@ import type { ConfigPatch, ProjectConfig } from '@mnemonima/core'
 import {
   getActiveSpace,
   listBatches,
+  listEvalRuns,
+  recordEvalRun,
   listRevisions,
   listSpaces,
   requireNote,
@@ -11,8 +13,16 @@ import {
   setConfig,
   spaceUsage,
 } from '@mnemonima/store'
-import { exportDirectory, runDoctor, fixDoctorFindings } from '@mnemonima/engine'
-import type { DoctorFixReport, DoctorReport } from '@mnemonima/engine'
+import {
+  evalSetPath,
+  exportDirectory,
+  fixDoctorFindings,
+  readQuerySet,
+  runDoctor,
+  runEval,
+  tuneWeights,
+} from '@mnemonima/engine'
+import type { DoctorFixReport, DoctorReport, ResolvedEmbedder, SearchIndex } from '@mnemonima/engine'
 import type { HotProject } from './pool.js'
 
 /**
@@ -183,4 +193,96 @@ export function readBatches(
     project: project.name,
     batches: listBatches(project.handle.db, limit),
   }
+}
+
+export interface EvalView {
+  readonly project: string
+  readonly set: string
+  readonly exists: boolean
+  readonly queries: number
+  readonly history: unknown[]
+}
+
+/**
+ * The golden set and what previous runs said about it.
+ *
+ * A missing set is reported rather than thrown, because the screen that asks
+ * this exists precisely to tell an operator who has no set that they need one.
+ */
+export function readEval(project: HotProject, limit: number): EvalView {
+  const set = evalSetPath(project.handle.dir)
+  const exists = fs.existsSync(set)
+
+  return {
+    project: project.name,
+    set,
+    exists,
+    queries: exists ? readQuerySet(project.handle.dir).queries.length : 0,
+    history: listEvalRuns(project.handle.db, limit),
+  }
+}
+
+/**
+ * Runs the set, or searches the weights, and records what it found.
+ *
+ * A tuning run is not recorded: it measured configurations the project does not
+ * have, and a history of numbers that were never in effect would make the one
+ * question the history answers — did that change help — unanswerable.
+ */
+export async function runProjectEval(
+  project: HotProject,
+  resolved: ResolvedEmbedder | null,
+  index: SearchIndex | undefined,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const set = readQuerySet(project.handle.dir)
+  const recallK = typeof body['recallK'] === 'number' ? body['recallK'] : 5
+  const ndcgK = typeof body['ndcgK'] === 'number' ? body['ndcgK'] : 10
+
+  if (body['tune'] === true) {
+    const report = await tuneWeights(
+      project.handle.db,
+      project.config,
+      resolved,
+      set,
+      project.name,
+      {
+        trials: typeof body['trials'] === 'number' ? body['trials'] : 40,
+        objective: body['objective'] === 'mrr' || body['objective'] === 'recall'
+          ? body['objective']
+          : 'ndcg',
+        recallK,
+        ndcgK,
+        index,
+      },
+    )
+
+    return { tuned: true, ...report }
+  }
+
+  const report = await runEval(
+    project.handle.db,
+    project.config,
+    resolved,
+    set,
+    project.name,
+    { recallK, ndcgK, index },
+  )
+
+  recordEvalRun(project.handle.db, {
+    spaceId: getActiveSpace(project.handle.db)?.id ?? null,
+    queries: report.metrics.queries,
+    recallK,
+    ndcgK,
+    recall: report.metrics.recallAtK,
+    mrr: report.metrics.mrr,
+    ndcg: report.metrics.ndcgAtK,
+    p50Ms: report.metrics.p50Ms,
+    p95Ms: report.metrics.p95Ms,
+    config: project.config.search,
+    metrics: report.metrics,
+    note: typeof body['note'] === 'string' ? body['note'] : null,
+  })
+
+  return { tuned: false, ...report }
 }
