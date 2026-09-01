@@ -6,8 +6,12 @@
   "exports": {
     "./package.json": "./package.json"
   },
-  "files": ["dist"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json && vite build"
   },
@@ -18,6 +22,8 @@
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.35.3",
     "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.1",
+    "graphology-layout-forceatlas2": "^0.10.1",
     "sigma": "^3.0.1",
     "vite": "^6.0.5"
   }

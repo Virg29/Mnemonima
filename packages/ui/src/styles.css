@@ -450,3 +450,32 @@ a:hover {
   content: "]]";
   color: var(--muted);
 }
+
+/* ---- graph ------------------------------------------------------------ */
+
+.graph-split {
+  grid-template-columns: 1fr 300px;
+}
+
+.graph {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+
+.graph-detail h2 {
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.graph-detail pre {
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+}

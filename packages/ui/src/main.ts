@@ -1,6 +1,7 @@
 import './styles.css'
 import { api } from './api.js'
 import { App, failure } from './app.js'
+import { graphScreen } from './views/graph.js'
 import { healthScreen } from './views/health.js'
 import { labScreen } from './views/lab.js'
 import { noteScreen } from './views/note.js'
@@ -20,7 +21,12 @@ if (root !== null) {
   void (async () => {
     const app = new App(root)
 
-    app.add(projectsScreen(app)).add(labScreen()).add(noteScreen()).add(healthScreen())
+    app
+      .add(projectsScreen(app))
+      .add(labScreen())
+      .add(graphScreen())
+      .add(noteScreen())
+      .add(healthScreen())
 
     try {
       const health = await api.status()
