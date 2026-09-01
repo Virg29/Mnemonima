@@ -13,6 +13,7 @@ export * from './links.js'
 export * from './terms.js'
 export * from './snapshots.js'
 export * from './evals.js'
+export * from './adopted.js'
 
 // Test helper, exported so sibling packages can build an isolated MNEMONIMA_HOME
 // without reaching across package boundaries by relative path.

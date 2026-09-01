@@ -61,7 +61,10 @@ export function prepareNote(
       hint: 'start the body with a `# Heading`, or pass --title explicitly',
     })
   }
-  assertEnglishScript(title, 'note title')
+  // The title obeys the same mode as the body. It used to be checked
+  // unconditionally, which meant `language.gate: off` did not actually turn the
+  // gate off — a body could pass and its own heading still be refused.
+  if (config.language.gate !== 'off') assertEnglishScript(title, 'note title')
 
   return { title, body, outline: parsed.outline, warning }
 }

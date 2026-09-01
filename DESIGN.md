@@ -1,7 +1,7 @@
 # mnemonima — design document (v0.2)
 
-> Status: **stages 0–9 shipped; stage 10+ (post-MVP) is what is left.** See
-> §15 for the board and §18 for where the work stands.
+> Status: **stages 0–9 shipped; `adopt` is in, the cross-encoder is not.**
+> See §15 for the board and §18 for where the work stands.
 > Changes relative to v0.1 record the decisions taken in discussion — see §1.2.
 > This is the specification *and* the roadmap, so it is kept consistent with the
 > state of the repository: where a section describes something that was later
@@ -1157,7 +1157,9 @@ do not get lost.
 
 ### 14.1 adopt — importing somebody else's Obsidian vault
 
-> To be built **much later**, once the core, search and the UI have settled.
+> **Built.** `mnemonima adopt --dir <path>` reports by default and writes only
+> with `--write`. What follows is what it does and why; the points that turned
+> out differently in the building are marked.
 
 **The task:** pull in an existing vault that has no ids of ours and whose links
 go by file names and headings.
@@ -1190,9 +1192,31 @@ go by file names and headings.
    are non-English, which name collisions there are. Only after that does a real
    run happen.
 
-**Estimate:** this is a feature in its own right, several days of work with its
-own test set over dirty data. Do not mix it with the ordinary `import` (§5.2),
-which works **only** with our frontmatter.
+**What the building changed.** Two of the eight points above turned out to be
+simpler than written, and one harder.
+
+Point 2, resolving links by name, needed no name-resolution pass at all: the
+ordinary resolver now understands a file reference — `aspects.md`, `./aspects.md`,
+`../mechanics/aspects.md#the-lock` — and point 3's alias is what it matches
+against. The two points are one mechanism.
+
+Point 1, deterministic ids, is the walk order: directories and files sorted by
+name, so a second machine hands out the same ids.
+
+Point 7, idempotency, needed storage. `body_hash` alone cannot do it — an edited
+file has a different body and is the same file — so the source path is recorded
+in an `adopted` table (migration 003). It is deliberately not an alias: an alias
+is a name a note answers to in search, and `docs/mechanics/aspects.md` is not
+one. A file that **moves** therefore reads as a new note, which is the honest
+outcome: guessing a rename would merge two notes on a hunch.
+
+**Measured on the case that motivated it.** The same 19 files that produced 118
+links, every one dangling, when added with `new --file`: adopted, they produce
+126 links of which 4 dangle — and those four point outside the adopted
+directory, so they are dangling in fact rather than by accident.
+
+Do not mix it with the ordinary `import` (§5.2), which works **only** with our
+frontmatter.
 
 ### 14.2 Cross-encoder rerank
 
@@ -1252,7 +1276,7 @@ and that is a perfectly normal outcome.
 | **7. MCP** | **done** | nineteen tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
 | **8. UI** | **done** | projects → graph → editor → search lab → terms → spaces → eval → settings → health | tuning the weights live with `why` |
 | **9. Eval** | **done** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
-| **10+. Post-MVP** | **next** | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
+| **10+. Post-MVP** | `adopt` **done**; rerank not started | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
 
 Stages 1–3 give a working search engine; 5–7 a working tool for an agent; 8–9
 manageable quality.

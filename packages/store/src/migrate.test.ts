@@ -34,7 +34,7 @@ describe('migrations', () => {
     expect(result.to).toBe(latestSchemaVersion())
     // Named rather than counted, so adding one is a deliberate edit here and
     // an accidental reordering fails instead of passing quietly.
-    expect(result.applied).toEqual(['1-init', '2-eval'])
+    expect(result.applied).toEqual(['1-init', '2-eval', '3-adopt'])
     expect(schemaVersion(db)).toBe(latestSchemaVersion())
   })
 

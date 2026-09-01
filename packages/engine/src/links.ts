@@ -15,7 +15,35 @@ import type { Db, LinkInput } from '@mnemonima/store'
  * corruption, and `doctor` reports it without touching it. It also means a
  * forward reference works — write `[[SL-0100]]` before SL-0100 exists, and the
  * link starts resolving the moment it does.
+ *
+ * A target is also tried as a **file reference**, because notes that came from
+ * a directory of markdown link to each other by filename: `[aspects](aspects.md)`,
+ * `./aspects.md`, `../mechanics/aspects.md#heading`. The first real project
+ * imported this way arrived with 118 links, every one of them dangling, and the
+ * only thing wrong with them was the `.md`. Stripping the directory, the suffix
+ * and the anchor turns the target back into a name the alias and title tables
+ * already know — which is why `adopt` puts each original basename into
+ * `aliases` (DESIGN.md 14.1).
  */
+
+/**
+ * `../mechanics/aspects.md#the-lock` -> `aspects`.
+ *
+ * Returns null when the target does not look like a file reference at all, so
+ * an ordinary title containing a dot is not mangled into something shorter.
+ */
+export function fileReferenceName(target: string): string | null {
+  const trimmed = target.trim()
+  if (trimmed === '' || /^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null
+
+  const withoutAnchor = trimmed.split('#')[0]?.split('?')[0] ?? ''
+  const basename = withoutAnchor.split(/[\\/]/).pop() ?? ''
+
+  if (!/\.(md|markdown)$/i.test(basename)) return null
+
+  const name = basename.replace(/\.(md|markdown)$/i, '').trim()
+  return name === '' ? null : name
+}
 
 export interface LinkResolver {
   resolve(target: string): { dst: string; resolved: boolean }
@@ -58,6 +86,26 @@ export function buildResolver(db: Db): LinkResolver {
 
       const title = byTitle.get(key)
       if (title !== undefined) return { dst: title, resolved: true }
+
+      // Last, so a note actually named `notes.md` still wins over a file of
+      // that name: the exact target is always tried before it is taken apart.
+      const file = fileReferenceName(target)
+      if (file !== null) {
+        const name = file.toLowerCase()
+
+        // A filename leading with an id — the shape our own export writes —
+        // resolves through the id branch rather than the tables.
+        const leadingId = file.split(/\s+/)[0] ?? ''
+        if (parseNoteId(leadingId) !== null && ids.has(leadingId)) {
+          return { dst: leadingId, resolved: true }
+        }
+
+        const byFileAlias = byAlias.get(name)
+        if (byFileAlias !== undefined) return { dst: byFileAlias, resolved: true }
+
+        const byFileTitle = byTitle.get(name)
+        if (byFileTitle !== undefined) return { dst: byFileTitle, resolved: true }
+      }
 
       return { dst: target.trim(), resolved: false }
     },

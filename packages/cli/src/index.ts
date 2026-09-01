@@ -14,6 +14,7 @@ import { registerNoteCommands } from './commands/note.js'
 import { registerProjectCommands } from './commands/project.js'
 import { registerTermCommands } from './commands/terms.js'
 import { registerUndoCommands } from './commands/undo.js'
+import { registerAdoptCommand } from './commands/adopt.js'
 import { registerEvalCommand } from './commands/eval.js'
 import { registerUiCommand } from './commands/ui.js'
 
@@ -56,6 +57,7 @@ registerModelCommands(program)
 registerTermCommands(program)
 registerDaemonCommands(program)
 registerEvalCommand(program)
+registerAdoptCommand(program)
 registerUiCommand(program)
 registerBridgeCommands(program)
 registerUndoCommands(program)
