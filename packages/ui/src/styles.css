@@ -308,3 +308,66 @@ input.grow {
 .bad {
   color: var(--bad);
 }
+
+/* ---- search lab ------------------------------------------------------- */
+
+.knob {
+  display: grid;
+  grid-template-columns: 8.5em 1fr 3.5em;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.knob label {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: help;
+}
+
+/* A grid item's min-width is `auto`, which for a range input is its intrinsic
+   width — wide enough to push the read-out out of the panel. */
+.knob input[type="range"] {
+  min-width: 0;
+}
+
+.knob .id {
+  text-align: right;
+}
+
+/* The `why` breakdown: the parts sum to the score, so the bar is the
+   arithmetic rather than an impression of it (DESIGN.md 8.6). */
+.why {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border);
+  margin: 8px 0 6px;
+}
+
+.why span {
+  display: block;
+  height: 100%;
+}
+
+blockquote {
+  margin: 8px 0 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+blockquote .hint {
+  margin: 0 0 2px;
+  font-size: 12px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+a:hover {
+  text-decoration: underline;
+}
