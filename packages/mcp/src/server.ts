@@ -354,6 +354,50 @@ export function createMcpServer(options: McpOptions): McpServer {
       ),
   )
 
+  tool(
+    'mnemonima_history',
+    {
+      title: 'Read the revision log',
+      description:
+        'What changed, when, and who changed it. With a note id: that note\'s revisions, ' +
+        'newest first. Without one: the write batches, so a session can be found before it ' +
+        'is undone. Pass a revision to read the body as it was then, or two to see what ' +
+        'changed between them — reading never restores, mnemonima_undo is what puts a note ' +
+        'back.',
+      inputSchema: {
+        id: z.string().optional(),
+        rev: z.number().int().nonnegative().optional(),
+        from: z.number().int().nonnegative().optional(),
+        to: z.number().int().nonnegative().optional(),
+        limit: z.number().int().positive().optional(),
+      },
+    },
+    (args) => {
+      const id = args['id'] as string | undefined
+      const from = args['from'] as number | undefined
+      const to = args['to'] as number | undefined
+      const rev = args['rev'] as number | undefined
+
+      if (id === undefined) {
+        return client.call('GET', `${base}/batches?limit=${args['limit'] ?? 20}`)
+      }
+
+      if (from !== undefined || to !== undefined) {
+        const query = new URLSearchParams()
+        if (from !== undefined) query.set('from', String(from))
+        if (to !== undefined) query.set('to', String(to))
+
+        return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/diff?${query}`)
+      }
+
+      if (rev !== undefined) {
+        return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/revisions/${rev}`)
+      }
+
+      return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/revisions`)
+    },
+  )
+
   // ---- administration ----------------------------------------------------
 
   tool(

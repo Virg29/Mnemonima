@@ -15,7 +15,7 @@ import {
   requireNote,
   saveLayout,
 } from '@mnemonima/store'
-import { loadGraph, neighboursOf, searchNotes } from '@mnemonima/engine'
+import { diffRevisions, loadGraph, neighboursOf, readRevision, searchNotes } from '@mnemonima/engine'
 import type { SearchMode } from '@mnemonima/engine'
 import {
   activateSpace,
@@ -590,6 +590,39 @@ export function createServer(options: ServerOptions): {
   app.get('/projects/:name/notes/:id/revisions', (context) =>
     context.json(readRevisions(pool.acquire(context.req.param('name')), context.req.param('id'))),
   )
+
+  /**
+   * One revision as it was written.
+   *
+   * A read, never a restore. Looking at what a note used to say must not be an
+   * edit; the revert endpoint is what changes it.
+   */
+  app.get('/projects/:name/notes/:id/revisions/:rev', (context) => {
+    const project = pool.acquire(context.req.param('name'))
+    const rev = Number(context.req.param('rev'))
+
+    return context.json(
+      readRevision(project.handle.db, context.req.param('id'), Number.isFinite(rev) ? rev : 0),
+    )
+  })
+
+  app.get('/projects/:name/notes/:id/diff', (context) => {
+    const project = pool.acquire(context.req.param('name'))
+    const number = (name: string): number | undefined => {
+      const raw = context.req.query(name)
+      if (raw === undefined) return undefined
+      const parsed = Number(raw)
+      return Number.isFinite(parsed) ? parsed : undefined
+    }
+
+    return context.json(
+      diffRevisions(project.handle.db, context.req.param('id'), {
+        from: number('from'),
+        to: number('to'),
+        context: number('context'),
+      }),
+    )
+  })
 
   app.get('/projects/:name/batches', (context) => {
     const limit = Number(context.req.query('limit') ?? '20')

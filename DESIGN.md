@@ -892,12 +892,12 @@ GET    /ui/*
 
 ### 10.3 MCP server
 
-Full access (read + write + administration), as decided. Nineteen tools as
+Full access (read + write + administration), as decided. Twenty tools as
 built — the shape held, the list grew as the write path did:
 
 | Tools | Category |
 |---|---|
-| `mnemonima_search`, `mnemonima_get_note`, `mnemonima_list_notes`, `mnemonima_list_terms`, `mnemonima_graph` | read (5) |
+| `mnemonima_search`, `mnemonima_get_note`, `mnemonima_list_notes`, `mnemonima_list_terms`, `mnemonima_graph`, `mnemonima_history` | read (6) |
 | `mnemonima_create_note`, `mnemonima_update_note`, `mnemonima_archive_note`, `mnemonima_delete_note`, `mnemonima_link`, `mnemonima_unlink`, `mnemonima_add_alias`, `mnemonima_add_term`, `mnemonima_block_term`, `mnemonima_remove_term`, `mnemonima_undo` | write (11) |
 | `mnemonima_index`, `mnemonima_export`, `mnemonima_status` | administration (3) |
 
@@ -910,7 +910,9 @@ the CLI, and `mnemonima_run_eval` waits for stage 9.
 the graph):
 
 1. **Every write is a new revision** in `note_revisions` with
-   `author='mcp:<client>'`. `mnemonima history` / `revert` always work.
+   `author='mcp:<client>'`. `mnemonima history` / `revert` always work, and
+   `mnemonima_history` lets the agent read the log it is writing to — see what a
+   revision said, or what changed between two, without restoring either.
 2. **Batch undo:** every MCP session gets a `batch_id`;
    `mnemonima undo --batch <id>` takes back everything the agent did in that
    session with one command.
@@ -930,6 +932,39 @@ the graph):
 
 ---
 
+
+#### Reading the log
+
+The log recorded when a note changed and who changed it, and nothing about
+**what** changed: the only route to an old body was `revert`, so looking meant
+editing. Every revision already carries the whole body, so this is lookup and
+arithmetic rather than new bookkeeping.
+
+```bash
+mnemonima history SL-0042          # which revisions there are
+mnemonima get SL-0042 --rev 7      # the note as it was, printed, not restored
+mnemonima diff SL-0042             # the last edit
+mnemonima diff SL-0042 --from 7 --to 9
+```
+
+`0` means the note as it stands. It is not a revision number — the current
+revision has a row of its own — but "compare with what is there now" is the
+question actually asked, and spelling it as the live note rather than making the
+caller look up the latest number is the difference between a usable command and
+one that needs `history` run first. `diff` with neither end given answers "what
+was the last edit".
+
+The diff is line-based and written here rather than pulled in: the whole job is
+a longest common subsequence over a few hundred lines of markdown, and a
+dependency would be more surface than code. Common prefix and suffix are
+stripped first, which is what keeps the quadratic part cheap — an edit to one
+paragraph of a long note leaves almost nothing for it to chew on. Past 4000
+lines a side it says it could not compare rather than freezing.
+
+The page shows the same thing on the note screen: the revision list is a card in
+the sidebar, and picking one puts the diff where the preview was. The editor and
+its unsaved text sit underneath, untouched — **reading is not restoring**, and
+the screen should not be able to blur that.
 ## 11. English-only gates
 
 Three layers, applied to notes, to queries and to writes over MCP alike.
@@ -1444,7 +1479,7 @@ and that is a perfectly normal outcome.
 | **4. Terms** | **done** | YAKE + IDF + KeyBERT + structural, gazetteer, dictionary, promotion, 4 knobs | `terms list --candidates` makes sense |
 | **5. Daemon** | **done** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
 | **6. Markdown bridge** | **done** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
-| **7. MCP** | **done** | nineteen tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
+| **7. MCP** | **done** | twenty tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
 | **8. UI** | **done** | projects → graph → editor → search lab → terms → spaces → eval → settings → health | tuning the weights live with `why` |
 | **9. Eval** | **done** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
 | **10+. Post-MVP** | `adopt` **done**; rerank not started | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
@@ -1558,7 +1593,7 @@ the link graph with derived backlinks, preserved dangling targets, the graph
 boost and expansion; term extraction fusing YAKE, corpus IDF and candidate
 embeddings on top of the manual gazetteer; the local daemon with its hot-project
 pool; the markdown bridge with conflict resolution and git; and the MCP server
-with nineteen tools, every write attributed, batched and undoable.
+with twenty tools, every write attributed, batched and undoable.
 
 … and the web UI: seven screens over the daemon's API, with the search lab
 tuning every weight live against a warm index and the graph creating a link by

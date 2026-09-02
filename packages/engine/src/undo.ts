@@ -53,7 +53,9 @@ export function revertNote(
 
   const target = getRevision(db, id, rev)
   if (target === null) {
-    const available = listRevisions(db, id).map((entry) => entry.rev)
+    const available = listRevisions(db, id)
+      .map((entry) => entry.rev)
+      .sort((a, b) => a - b)
     throw new NotFoundError(`note ${id} has no revision ${rev}`, {
       details: { id, rev, available },
       hint: `available revisions: ${available.join(', ')}`,

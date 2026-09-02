@@ -5,6 +5,7 @@ import { Command, CommanderError } from 'commander'
 import { printFailure } from './output.js'
 import { registerBridgeCommands } from './commands/bridge.js'
 import { registerConfigCommands } from './commands/config.js'
+import { registerDiffCommand } from './commands/diff.js'
 import { registerDaemonCommands } from './commands/daemon.js'
 import { registerFindCommand } from './commands/find.js'
 import { registerGraphCommands } from './commands/graph.js'
@@ -62,6 +63,7 @@ registerUiCommand(program)
 registerBridgeCommands(program)
 registerUndoCommands(program)
 registerConfigCommands(program)
+registerDiffCommand(program)
 
 program.addHelpText(
   'after',

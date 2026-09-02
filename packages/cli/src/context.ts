@@ -90,13 +90,23 @@ function parseThreads(value: string | number | undefined): number | undefined {
   return threads
 }
 
-export function parsePositiveInt(value: string, flag: string): number {
+export function parsePositiveInt(
+  value: string,
+  flag: string,
+  // `diff --context 0` is a real request: show the changed lines and nothing
+  // around them.
+  options: { allowZero?: boolean } = {},
+): number {
+  const least = options.allowZero === true ? 0 : 1
   const parsed = Number.parseInt(value, 10)
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new BadRequestError(`${flag} must be a positive integer, got "${value}"`, {
-      details: { value },
-    })
+
+  if (!Number.isInteger(parsed) || parsed < least) {
+    throw new BadRequestError(
+      `${flag} must be ${least === 0 ? 'zero or a positive integer' : 'a positive integer'}, got "${value}"`,
+      { details: { value } },
+    )
   }
+
   return parsed
 }
 

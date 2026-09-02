@@ -223,6 +223,39 @@ export interface DoctorView {
   activeSpace: string | null
 }
 
+export interface RevisionBody {
+  noteId: string
+  /** null for the note as it stands. */
+  rev: number | null
+  title: string
+  body: string
+  op: string | null
+  author: string | null
+  createdAt: number
+}
+
+export interface DiffLine {
+  op: 'equal' | 'add' | 'remove'
+  text: string
+  before: number | null
+  after: number | null
+}
+
+export interface DiffHunk {
+  beforeStart: number
+  beforeCount: number
+  afterStart: number
+  afterCount: number
+  lines: DiffLine[]
+}
+
+export interface RevisionDiff {
+  noteId: string
+  from: RevisionBody
+  to: RevisionBody
+  diff: { hunks: DiffHunk[]; added: number; removed: number; identical: boolean; truncated: boolean }
+}
+
 export interface RevisionRow {
   noteId: string
   rev: number
@@ -413,6 +446,21 @@ export const api = {
 
   revisions: (project: string, id: string): Promise<{ revisions: RevisionRow[] }> =>
     call('GET', `/projects/${encode(project)}/notes/${encode(id)}/revisions`),
+
+  revision: (project: string, id: string, rev: number): Promise<RevisionBody> =>
+    call('GET', `/projects/${encode(project)}/notes/${encode(id)}/revisions/${rev}`),
+
+  diff: (
+    project: string,
+    id: string,
+    range: { from?: number; to?: number } = {},
+  ): Promise<RevisionDiff> => {
+    const query = new URLSearchParams()
+    if (range.from !== undefined) query.set('from', String(range.from))
+    if (range.to !== undefined) query.set('to', String(range.to))
+
+    return call('GET', `/projects/${encode(project)}/notes/${encode(id)}/diff?${query}`)
+  },
 
   batches: (project: string): Promise<{ batches: BatchRow[] }> =>
     call('GET', `/projects/${encode(project)}/batches`),

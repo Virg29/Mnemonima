@@ -11,7 +11,8 @@ import {
   removeAlias,
   requireNote,
 } from '@mnemonima/store'
-import { writeNewNote, writeNoteBody } from '@mnemonima/engine'
+import { readRevision, writeNewNote, writeNoteBody } from '@mnemonima/engine'
+import type { Db } from '@mnemonima/store'
 import { Command } from 'commander'
 import { openContext, parsePositiveInt } from '../context.js'
 import { printBatches } from './undo.js'
@@ -195,13 +196,32 @@ export function registerNoteCommands(program: Command): void {
     .option('--json', 'machine readable output')
     .option('--body-only', 'print just the markdown body')
     .option('-N, --with-neighbours', 'also show links, backlinks and aliases')
+    .option(
+      '-r, --rev <n>',
+      'print the note as it was at this revision, instead of as it is',
+    )
     .action(
       (
         id: string,
-        options: { project?: string; json?: boolean; bodyOnly?: boolean; withNeighbours?: boolean },
+        options: {
+          project?: string
+          json?: boolean
+          bodyOnly?: boolean
+          withNeighbours?: boolean
+          rev?: string
+        },
       ) => {
       const context = openContext(options.project)
       try {
+        // An old revision is read, never restored: looking at what a note used
+        // to say must not be an edit. `revert` is the command that changes it.
+        const rev = options.rev === undefined ? undefined : parsePositiveInt(options.rev, '--rev')
+
+        if (rev !== undefined) {
+          printOldRevision(context.project.db, id, rev, options)
+          return
+        }
+
         const note = requireNote(context.project.db, id)
         const extras =
           options.withNeighbours === true
@@ -476,4 +496,41 @@ export function registerNoteCommands(program: Command): void {
         context.close()
       }
     })
+}
+
+/**
+ * A note as it was, rather than as it is.
+ *
+ * The header says which revision and who wrote it, so a body printed from the
+ * past cannot be mistaken for the current one — the whole risk of this command
+ * is somebody reading an old body and thinking it is live.
+ */
+function printOldRevision(
+  db: Db,
+  id: string,
+  rev: number,
+  options: { json?: boolean; bodyOnly?: boolean },
+): void {
+  const revision = readRevision(db, id, rev)
+
+  if (options.json === true) {
+    printJson(revision)
+    return
+  }
+
+  if (options.bodyOnly === true) {
+    process.stdout.write(revision.body.endsWith('\n') ? revision.body : `${revision.body}\n`)
+    return
+  }
+
+  printLine(`${revision.noteId}  ${revision.title}`)
+  printFields([
+    ['revision', String(revision.rev)],
+    ['operation', revision.op ?? '-'],
+    ['author', revision.author ?? '-'],
+    ['written', new Date(revision.createdAt).toISOString()],
+  ])
+  printNote('this is an old revision; the note as it stands is what `get` prints without --rev')
+  printLine()
+  printLine(revision.body)
 }

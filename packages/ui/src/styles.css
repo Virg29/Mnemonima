@@ -831,3 +831,102 @@ a:hover {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ---- revisions and diffs ----------------------------------------------- */
+
+.revisions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.revisions .revision {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.revisions .revision:hover {
+  background: var(--border);
+}
+
+.diff {
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.diff-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.diff-head h2 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.hunk {
+  margin-bottom: 12px;
+}
+
+.hunk-head {
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+/*
+ * Two gutters and a sign, so a line can be found in either body. Line numbers
+ * are what makes a diff usable next to an editor that shows them as well.
+ */
+.diff-line {
+  display: grid;
+  grid-template-columns: 3.2em 3.2em 1em 1fr;
+  gap: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-line .gutter {
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+
+.diff-line .sign {
+  user-select: none;
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.diff-line.remove {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+
+.diff-line.add .sign {
+  color: var(--ok);
+}
+
+.diff-line.remove .sign {
+  color: var(--bad);
+}

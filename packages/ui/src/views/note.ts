@@ -1,5 +1,5 @@
 import { api } from '../api.js'
-import type { NoteView } from '../api.js'
+import type { NoteView, RevisionDiff } from '../api.js'
 import type { Screen, Surface } from '../app.js'
 import { clear, el, when } from '../dom.js'
 import { markdownEditor } from '../editor.js'
@@ -133,15 +133,24 @@ function renderEditor(
     reindex,
   )
 
+  // The preview lives inside a pane the history card can take over, so a diff
+  // replaces the rendered note without disturbing the editor or its unsaved text.
+  const pane = el('div', { class: 'pane' }, [preview])
+
   surface.body.append(
     el('div', { class: 'split editor' }, [
-      el('div', { class: 'panes' }, [el('div', { class: 'code' }, [view.dom]), preview]),
-      sidebar(surface, note),
+      el('div', { class: 'panes' }, [el('div', { class: 'code' }, [view.dom]), pane]),
+      sidebar(surface, note, pane, preview),
     ]),
   )
 }
 
-function sidebar(surface: Surface, note: NoteView): HTMLElement {
+function sidebar(
+  surface: Surface,
+  note: NoteView,
+  pane: HTMLElement,
+  preview: HTMLElement,
+): HTMLElement {
   const manual = note.terms.filter((term) => term.source === 'manual')
   const automatic = note.terms.filter((term) => term.source !== 'manual')
 
@@ -225,6 +234,8 @@ function sidebar(surface: Surface, note: NoteView): HTMLElement {
         ),
       ),
     ]),
+
+    historyCard(surface, note, pane, preview),
   ])
 }
 
@@ -237,4 +248,127 @@ function noteLink(surface: Surface, id: string, label: string): HTMLElement {
       surface.go('note', id)
     },
   })
+}
+
+/**
+ * The revision log, and what each revision changed.
+ *
+ * Reading is not restoring. The log said when a note changed and who changed
+ * it, and the only route to an old body was `revert` — so looking meant
+ * editing. Every revision carries the whole body, so this asks the daemon and
+ * shows the answer where the preview was; the editor and its unsaved text are
+ * untouched underneath.
+ */
+function historyCard(
+  surface: Surface,
+  note: NoteView,
+  pane: HTMLElement,
+  preview: HTMLElement,
+): HTMLElement {
+  const list = el('div', { class: 'revisions' })
+
+  const showPreview = (): void => {
+    pane.replaceChildren(preview)
+  }
+
+  showPreview()
+
+  const showDiff = async (rev: number): Promise<void> => {
+    pane.replaceChildren(el('p', { class: 'hint', text: 'reading the log…' }))
+
+    try {
+      const result = await api.diff(surface.project, note.id, { from: rev })
+      pane.replaceChildren(diffView(result, showPreview))
+    } catch (error) {
+      showPreview()
+      surface.fail(error)
+    }
+  }
+
+  void (async () => {
+    try {
+      const { revisions } = await api.revisions(surface.project, note.id)
+
+      list.replaceChildren(
+        ...revisions.map((revision) =>
+          el('button', {
+            class: 'revision',
+            title: `What changed between revision ${revision.rev} and the note as it stands`,
+            text: `${revision.rev}  ${revision.op}  ${revision.author}  ${when(revision.createdAt)}`,
+            onclick: () => void showDiff(revision.rev),
+          }),
+        ),
+      )
+
+      if (revisions.length === 0) list.replaceChildren(el('p', { class: 'hint', text: 'None.' }))
+    } catch (error) {
+      surface.fail(error)
+    }
+  })()
+
+  return el('div', { class: 'card' }, [
+    el('h2', { text: 'History' }),
+    el('p', {
+      class: 'hint',
+      text: 'Pick a revision to see what changed between it and the note as it stands. Nothing is restored.',
+    }),
+    list,
+  ])
+}
+
+/**
+ * A diff, in the shape a reader already knows from git.
+ *
+ * Built as elements rather than markup because the lines are note text: they go
+ * through `textContent`, which is the one rule `dom.ts` exists to keep.
+ */
+function diffView(result: RevisionDiff, onClose: () => void): HTMLElement {
+  const side = (at: RevisionDiff['from']): string =>
+    at.rev === null ? 'as it stands' : `revision ${at.rev}${at.author === null ? '' : ` (${at.author})`}`
+
+  const header = el('div', { class: 'diff-head' }, [
+    el('h2', { text: `${side(result.from)} → ${side(result.to)}` }),
+    el('span', {
+      class: 'hint',
+      text: result.diff.identical
+        ? 'the two are the same text'
+        : `+${result.diff.added} −${result.diff.removed}`,
+    }),
+    el('button', { text: 'Close', onclick: onClose }),
+  ])
+
+  const hunks = result.diff.hunks.map((hunk) =>
+    el('div', { class: 'hunk' }, [
+      el('div', {
+        class: 'hunk-head',
+        text: `@@ -${hunk.beforeStart},${hunk.beforeCount} +${hunk.afterStart},${hunk.afterCount} @@`,
+      }),
+      ...hunk.lines.map((line) =>
+        el('div', { class: `diff-line ${line.op}` }, [
+          el('span', { class: 'gutter', text: line.before === null ? '' : String(line.before) }),
+          el('span', { class: 'gutter', text: line.after === null ? '' : String(line.after) }),
+          el('span', {
+            class: 'sign',
+            text: line.op === 'add' ? '+' : line.op === 'remove' ? '−' : ' ',
+          }),
+          el('span', { class: 'text', text: line.text }),
+        ]),
+      ),
+    ]),
+  )
+
+  return el('div', { class: 'diff' }, [
+    header,
+    ...(result.diff.truncated
+      ? [
+          el('p', {
+            class: 'hint warn',
+            text: 'Too large to compare line by line; shown as a wholesale replacement.',
+          }),
+        ]
+      : []),
+    ...(hunks.length === 0 && !result.diff.identical
+      ? [el('p', { class: 'hint', text: 'No lines differ.' })]
+      : hunks),
+  ])
 }
