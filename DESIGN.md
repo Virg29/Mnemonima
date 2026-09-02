@@ -1106,6 +1106,13 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    per browser — it is a property of the window somebody is reading in, not of
    the notes. Double-clicking the bar puts it back.
 
+   Sigma has to be told the container changed. It does not observe it — it
+   re-measures inside its own render, and the only thing that schedules one by
+   itself is a `window` resize. So the splitter calls `resize` and `refresh`,
+   once per animation frame while the bar moves and once more when it is let
+   go. Without that the column changed instantly and the canvas kept its old
+   pixel size until some later interaction happened to trigger a frame.
+
    The panel also **edits**. It is the same CodeMirror the notes screen uses,
    over the same `PUT` with the same `expectedRev`, so a second window editing
    the same note is refused here exactly as it is there; what this screen adds

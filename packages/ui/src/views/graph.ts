@@ -123,7 +123,7 @@ export function graphScreen(): Screen {
 
       const split = el('div', { class: 'split graph-split' }, [canvas, handle, detail])
       surface.body.append(split)
-      wireSplitter(split, handle)
+      applyStoredWidth(split)
 
       // Sigma measures the container, so it has to be in the document first.
       const graph = build(view)
@@ -136,6 +136,7 @@ export function graphScreen(): Screen {
       })
 
       live = renderer
+      wireSplitter(split, handle, renderer)
 
       const emphasis: Emphasis = { hits: null, hovered: null, near: new Set(), linking: null }
       const panel: Panel = { surface, detail, graph, notes: listing.notes }
@@ -218,29 +219,81 @@ const PANEL_MIN = 280
 const CANVAS_MIN = 320
 
 /**
+ * The remembered panel width, put on before sigma measures anything.
+ *
+ * Separate from the drag wiring because of the order the screen is built in:
+ * sigma has to be constructed against a container that is already the right
+ * size, and the container is only in the document once the split is appended.
+ */
+function applyStoredWidth(split: HTMLElement): void {
+  const remembered = Number(read(PANEL_WIDTH))
+  if (Number.isFinite(remembered) && remembered >= PANEL_MIN) {
+    split.style.setProperty('--graph-panel', `${Math.round(remembered)}px`)
+  }
+}
+
+/**
  * The bar between the graph and the panel, dragged to move it.
  *
  * The width is remembered per browser rather than per project: it is a property
  * of the window somebody is reading in, not of the notes. The custom property is
- * `--graph-panel` and not `--panel`, which is already the panel *colour* in
- * `:root`: `var(--panel, 34%)` resolved to `#f6f7f9`, which made the whole
+ * `--graph-panel` and not `--panel`, which `:root` already defines as the panel
+ * *colour*: `var(--panel, 34%)` resolved to `#f6f7f9`, which made the whole
  * grid-template declaration invalid and collapsed the screen into one column.
- * `localStorage` is
- * wrapped because a private window can refuse it, and a preview that will not
- * open is a worse failure than one that forgets how wide it was.
+ * `localStorage` is wrapped because a private window can refuse it, and a panel
+ * that will not open is a worse failure than one that forgets how wide it was.
  *
- * Sigma is not told anything. It watches its own container, so the canvas
- * resizes and re-renders on its own as the column changes.
+ * **Sigma has to be told.** It does not observe its container — it re-measures
+ * inside `render`, and the only thing that schedules one on its own is a
+ * `window` resize. Moving the splitter is neither, so the column changed
+ * immediately and the canvas kept its old pixel size until some later
+ * interaction happened to trigger a frame: about half a second of the graph
+ * visibly not fitting its box. `resize` then `refresh` on every pointer move is
+ * what makes the canvas follow the bar instead of catching up with it.
+ *
+ * `skipIndexation` during the drag, a full refresh on release. Nothing about a
+ * resize changes the graph's data, but the label grid is built from the
+ * viewport, and rebuilding it sixty times a second is the one part worth
+ * deferring to the end of the gesture.
  */
-function wireSplitter(split: HTMLElement, handle: HTMLElement): void {
+function wireSplitter(split: HTMLElement, handle: HTMLElement, renderer: Sigma): void {
+  let dragging = false
+  let frame = 0
+
   const apply = (width: number): void => {
     split.style.setProperty('--graph-panel', `${Math.round(width)}px`)
+
+    // One resize per frame: pointermove can outrun rendering, and every extra
+    // call would resize canvases nobody ever saw.
+    if (frame !== 0) return
+    frame = requestAnimationFrame(() => {
+      frame = 0
+      renderer.resize()
+      renderer.refresh({ skipIndexation: true })
+    })
   }
 
-  const remembered = Number(read(PANEL_WIDTH))
-  if (Number.isFinite(remembered) && remembered >= PANEL_MIN) apply(remembered)
+  /** The end of a gesture: one full refresh, with the label grid rebuilt. */
+  const settle = (): void => {
+    if (frame !== 0) cancelAnimationFrame(frame)
+    frame = 0
+    renderer.resize()
+    renderer.refresh()
+  }
 
-  let dragging = false
+  /** Back to the default, for a panel dragged somewhere unusable. */
+  const reset = (): void => {
+    split.style.removeProperty('--graph-panel')
+    write(PANEL_WIDTH, '')
+    settle()
+  }
+
+  // Preventing the default action of `pointerdown` — which is what keeps the
+  // drag from selecting the text either side of the bar — suppresses the
+  // compatibility mouse events, `mousedown` among them. `dblclick` survives it,
+  // which is why the reset hangs off that rather than off a click count on the
+  // pointer event: `detail` is 0 on every pointer event, by specification.
+  handle.addEventListener('dblclick', reset)
 
   handle.addEventListener('pointerdown', (event) => {
     dragging = true
@@ -265,16 +318,11 @@ function wireSplitter(split: HTMLElement, handle: HTMLElement): void {
     handle.releasePointerCapture((event as PointerEvent).pointerId)
     handle.classList.remove('dragging')
     write(PANEL_WIDTH, String(split.getBoundingClientRect().width - handleLeft(split, handle)))
+    settle()
   }
 
   handle.addEventListener('pointerup', stop)
   handle.addEventListener('pointercancel', stop)
-
-  // Back to the default, for a panel dragged somewhere unusable.
-  handle.addEventListener('dblclick', () => {
-    split.style.removeProperty('--graph-panel')
-    write(PANEL_WIDTH, '')
-  })
 }
 
 /** How far the handle sits from the left edge of the split. */
