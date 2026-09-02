@@ -50,35 +50,40 @@ const DIMMED_EDGE = '#eceef1'
 const ACTIVE_EDGE = '#2f6feb'
 
 /**
- * The ramp a search paints its hits with: red for the strongest match, blue for
- * the weakest, through the stops a thermal camera would use.
+ * The ramp a search paints its hits with, as `[position, r, g, b]`.
  *
- * Given as RGB triples because sigma's colour parser reads hex, `rgb()` and the
- * named HTML colours and nothing else — an `hsl()` string does not fail, it
- * comes out black.
+ * Black-body order: indigo for the weakest match, red through the middle,
+ * yellow at the hot end. The stops are **not** evenly spaced — red sits at
+ * 0.64 — which is what keeps the top of the range readable: an even three-stop
+ * ramp spends half its length getting out of the blues, and the difference
+ * between a good answer and the best one is the part worth seeing.
+ *
+ * RGB triples rather than a CSS colour string because sigma's parser reads hex,
+ * `rgb()` and the named HTML colours and nothing else — an `hsl()` string does
+ * not fail, it comes out black.
  */
-const HEAT: readonly (readonly [number, number, number])[] = [
-  [47, 87, 214],
-  [23, 150, 190],
-  [26, 160, 90],
-  [214, 178, 24],
-  [226, 124, 20],
-  [206, 32, 38],
+const HEAT: readonly (readonly [number, number, number, number])[] = [
+  [0, 70, 58, 180],
+  [0.64, 253, 29, 29],
+  [1, 253, 253, 29],
 ]
 
 /** A point on that ramp, `0` cold and `1` hot. */
 function heat(value: number): string {
   const t = Math.min(1, Math.max(0, value))
-  const scaled = t * (HEAT.length - 1)
-  const index = Math.min(HEAT.length - 2, Math.floor(scaled))
-  const fraction = scaled - index
 
-  const from = HEAT[index] ?? HEAT[0]!
-  const to = HEAT[index + 1] ?? HEAT[HEAT.length - 1]!
-  const mix = (channel: 0 | 1 | 2): number =>
+  let index = 0
+  while (index < HEAT.length - 2 && t > (HEAT[index + 1]?.[0] ?? 1)) index += 1
+
+  const from = HEAT[index]!
+  const to = HEAT[index + 1]!
+  const span = to[0] - from[0]
+  const fraction = span === 0 ? 0 : (t - from[0]) / span
+
+  const mix = (channel: 1 | 2 | 3): number =>
     Math.round(from[channel] + (to[channel] - from[channel]) * fraction)
 
-  return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`
+  return `rgb(${mix(1)}, ${mix(2)}, ${mix(3)})`
 }
 
 /**
@@ -902,8 +907,10 @@ function wireHighlight(
 /** The key to the ramp, shown only while a search is on screen. */
 function heatLegend(): HTMLElement {
   const strip = el('span', { class: 'heat-strip' })
-  strip.style.background = `linear-gradient(to right, ${HEAT.map(
-    ([r, g, b]) => `rgb(${r}, ${g}, ${b})`,
+  // Built from the same stops the nodes are painted from, positions included,
+  // so the key cannot drift away from what it is a key to.
+  strip.style.background = `linear-gradient(90deg, ${HEAT.map(
+    ([at, r, g, b]) => `rgb(${r}, ${g}, ${b}) ${Math.round(at * 100)}%`,
   ).join(', ')})`
 
   return el('span', { class: 'heat-legend' }, [

@@ -1088,16 +1088,20 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    are dashed edges into "phantom" nodes.
 
    **A search paints its results as a heat map.** Everything it did not match
-   goes flat grey, and every hit is repainted along a thermal ramp — red for
-   the strongest match, blue through green for the weakest — and sized to
-   match, so the best answers are what the eye lands on. The cluster colour
-   answers which group a note belongs to, which is the wrong question while a
-   query is on screen.
+   goes flat grey, and every hit is repainted along a black-body ramp — indigo
+   for the weakest match, red through the middle, yellow at the hot end — and
+   sized to match, so the best answers are what the eye lands on. The cluster
+   colour answers which group a note belongs to, which is the wrong question
+   while a query is on screen.
 
-   The ramp is stretched across the returned set: the top hit is always red,
-   the weakest returned always blue. Keyed to the **score**, not the rank,
+   The stops are not evenly spaced: red sits at 0.64 of the way up. An even
+   three-stop ramp spends half its length getting out of the blues, and the
+   difference between a good answer and the best one is the part worth seeing.
+
+   The ramp is stretched across the returned set: the top hit is always at the
+   hot end, the weakest returned always at the cold one. Keyed to the **score**, not the rank,
    because the two differ exactly where it matters — a note tied with the top
-   stays red instead of being demoted for coming second, and one that scored
+   stays hot instead of being demoted for coming second, and one that scored
    half as well sits halfway down the ramp whatever position it holds. It is
    the same trade the fusion already makes for BM25 (§8.4): a per-set
    normalisation says nothing about how one query compares with another and
