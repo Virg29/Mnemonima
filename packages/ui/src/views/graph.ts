@@ -250,6 +250,23 @@ export function graphScreen(): Screen {
 
       // Sigma measures the container, so it has to be in the document first.
       const graph = build(view, placed)
+
+      // Whatever the layout just worked out becomes the remembered position.
+      //
+      // Storing only what was dragged was not enough: the force-directed pass
+      // arranges the unplaced notes *around* the pinned ones, so pinning a
+      // single note moved every other note on the next visit. The graph jumped
+      // on every reload, which is worse than not remembering anything.
+      //
+      // Now a note is arranged once, on the first visit that sees it, and stays
+      // where that put it. Everything after is a new note finding a spot in a
+      // picture that no longer moves.
+      const arranged = new Map<string, Position>()
+      graph.forEachNode((id, attributes) => {
+        if (placed.has(id)) return
+        arranged.set(id, { x: Number(attributes['x']), y: Number(attributes['y']) })
+      })
+      layout.rememberMany(arranged)
       const renderer = new Sigma(graph, canvas, {
         defaultEdgeType: 'line',
         labelDensity: 0.6,

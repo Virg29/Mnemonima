@@ -23,7 +23,7 @@ export interface Position {
   readonly y: number
 }
 
-interface Stored {
+export interface Stored {
   positions: Record<string, [number, number]>
   /** Ids written locally that the server has not confirmed. */
   pending: string[]
@@ -65,27 +65,40 @@ function write(project: string, stored: Stored): void {
 
 /**
  * What the graph should draw with: the server's placements, with anything not
- * yet flushed on top.
+ * yet flushed on top, and the local copy filling whatever the server has no
+ * answer for.
  *
- * When the server has nothing and the page does, the page wins outright — that
- * is a project arranged before the daemon could be told, or told while it was
- * down, and throwing it away would be the one unrecoverable outcome here.
+ * That last part is not a fallback, it is the normal case for **phantom
+ * nodes**. A phantom stands for a link to an id no note has, so there is no row
+ * to hang a position on and the server drops it — and with only pending ids
+ * overlaid, every phantom came back unplaced and was re-arranged on each visit.
+ * Nine of them jumped on every reload of a project that otherwise stood still.
+ *
+ * It also covers a project the daemon has never been told about, or was told
+ * while it was down: the page keeps the picture until it can hand it over.
  */
-export function resolveLayout(
-  project: string,
+export function mergeLayout(
   fromServer: Record<string, Position>,
+  stored: Stored,
 ): Map<string, Position> {
-  const stored = read(project)
   const merged = new Map<string, Position>()
 
   for (const [id, at] of Object.entries(fromServer)) merged.set(id, at)
 
-  const local = new Set(stored.pending)
+  const unflushed = new Set(stored.pending)
   for (const [id, [x, y]] of Object.entries(stored.positions)) {
-    if (local.has(id) || merged.size === 0) merged.set(id, { x, y })
+    if (unflushed.has(id) || !merged.has(id)) merged.set(id, { x, y })
   }
 
   return merged
+}
+
+/** The same, against what this browser has stored for the project. */
+export function resolveLayout(
+  project: string,
+  fromServer: Record<string, Position>,
+): Map<string, Position> {
+  return mergeLayout(fromServer, read(project))
 }
 
 /**
@@ -111,10 +124,28 @@ export class LayoutStore {
 
   /** Records a move locally and schedules the sync. */
   remember(noteId: string, at: Position): void {
-    const stored = read(this.#project)
+    this.rememberMany(new Map([[noteId, at]]))
+  }
 
-    stored.positions[noteId] = [at.x, at.y]
-    if (!stored.pending.includes(noteId)) stored.pending.push(noteId)
+  /**
+   * The same, for a whole arrangement at once.
+   *
+   * One read and one write of the stored blob rather than one per node: the
+   * first visit to a project places every note it has, and doing that through
+   * `remember` would be a hundred JSON round trips to save one picture.
+   */
+  rememberMany(positions: ReadonlyMap<string, Position>): void {
+    if (positions.size === 0) return
+
+    const stored = read(this.#project)
+    const pending = new Set(stored.pending)
+
+    for (const [noteId, at] of positions) {
+      stored.positions[noteId] = [at.x, at.y]
+      pending.add(noteId)
+    }
+
+    stored.pending = [...pending]
     write(this.#project, stored)
 
     this.#schedule()

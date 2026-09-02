@@ -1138,7 +1138,10 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    ordinary request is cancelled by an unload, and `sendBeacon` cannot carry the
    bearer token). Partial because the page sends what moved: two windows on one
    project each keep their own drags instead of the slower one flattening the
-   other's. Merging is per note, last write wins.
+   other's. Merging is per note: a local move the server has not acknowledged
+   wins, the server wins once it has, and the local copy fills whatever the
+   server has no answer for — which is the normal case for a **phantom node**,
+   since a link to an id no note has has no row to hang a position on.
 
    **Arrange again** forgets both and lays the graph out from scratch.
 

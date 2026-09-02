@@ -25,7 +25,18 @@ export class ApiError extends Error {
   }
 }
 
-const token = new URLSearchParams(location.search).get('token') ?? ''
+/**
+ * The token from the query string, read when a request is made rather than
+ * when the module loads.
+ *
+ * At load time it means importing anything that touches this module outside a
+ * browser throws on `location` — which is what a test of the layout merge
+ * found, having imported it three files away.
+ */
+function token(): string {
+  if (typeof location === 'undefined') return ''
+  return new URLSearchParams(location.search).get('token') ?? ''
+}
 
 async function call<T>(
   method: string,
@@ -36,10 +47,12 @@ async function call<T>(
   // bearer token, so this is the only way to survive an unload.
   options: { keepalive?: boolean } = {},
 ): Promise<T> {
+  const bearer = token()
+
   const response = await fetch(path, {
     method,
     headers: {
-      ...(token === '' ? {} : { authorization: `Bearer ${token}` }),
+      ...(bearer === '' ? {} : { authorization: `Bearer ${bearer}` }),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
