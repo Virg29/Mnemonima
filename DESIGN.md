@@ -1109,6 +1109,39 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    cannot restyle on its own, so the graph asks the theme module what the page
    resolved to and repaints when that changes.
 
+   **Where a note sits is remembered.** The layout used to be recomputed on
+   every render — seed positions from a hash of the id, then force-directed
+   settling — which is reproducible and worth nothing to anybody who had
+   arranged the graph by hand: a drag survived until the next screen change, and
+   creating a link threw it away at the moment it was being used.
+
+   Positions live in `note_layout` (migration 004), a table of its own rather
+   than columns on `notes`. A position is not part of a note — it says nothing
+   that would survive an export to markdown — and it must not produce a
+   revision, or an agent's session log would fill with somebody tidying the
+   picture. A note with **no row** has never been placed, and that absence is
+   the signal the layout needs: everything stored is pinned, everything else is
+   arranged around it, so a new note finds its own spot near its neighbours
+   while the picture somebody built stays the picture they built.
+
+   Two stores, and each earns its place. The **database** is the shared truth:
+   an arrangement made on one machine is there on the next one, in the other
+   browser, and after the daemon restarts. `localStorage` is the **write-ahead
+   half**: a drag has to survive the moment between letting go and the next
+   flush — a reload, a closed tab, a daemon that is not answering — so every
+   move is written locally first and cleared only once the server has
+   acknowledged it. Nothing is lost when the sync cannot happen; the picture
+   simply stays local until it can.
+
+   The sync is a partial write, four seconds after the last move, plus a flush
+   when the screen closes and one on `pagehide` (with `keepalive`, because an
+   ordinary request is cancelled by an unload, and `sendBeacon` cannot carry the
+   bearer token). Partial because the page sends what moved: two windows on one
+   project each keep their own drags instead of the slower one flattening the
+   other's. Merging is per note, last write wins.
+
+   **Arrange again** forgets both and lays the graph out from scratch.
+
    The ramp is stretched across the returned set: the top hit is always at the
    hot end, the weakest returned always at the cold one. Keyed to the **score**, not the rank,
    because the two differ exactly where it matters — a note tied with the top

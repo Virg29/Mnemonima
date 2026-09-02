@@ -3,6 +3,7 @@ import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { BadRequestError, EXIT, MnemonimaError, applyPatch, listModels } from '@mnemonima/core'
 import {
+  clearLayout,
   createProject,
   danglingLinks,
   incomingLinks,
@@ -10,7 +11,9 @@ import {
   listNotes,
   noteTerms,
   outgoingLinks,
+  readLayout,
   requireNote,
+  saveLayout,
 } from '@mnemonima/store'
 import { loadGraph, neighboursOf, searchNotes } from '@mnemonima/engine'
 import type { SearchMode } from '@mnemonima/engine'
@@ -383,7 +386,39 @@ export function createServer(options: ServerOptions): {
       nodes,
       phantoms: [...phantoms.values()],
       edges,
+      // Sent with the graph rather than fetched beside it: the page cannot
+      // lay anything out until it knows which notes are already placed, and
+      // two round trips would mean either a wait or a visible re-arrangement.
+      layout: Object.fromEntries(readLayout(project.handle.db)),
     })
+  })
+
+  /**
+   * Where the notes sit on the graph.
+   *
+   * A partial write: the page sends what moved. Nothing here touches a note
+   * body, so nothing here writes a revision, schedules an export or invalidates
+   * an index — arranging a picture is not an edit.
+   */
+  app.put('/projects/:name/layout', async (context) => {
+    const project = pool.acquire(context.req.param('name'))
+    const body = (await readBody(context)) as {
+      positions?: Record<string, { x?: number; y?: number }>
+    }
+
+    const positions = Object.entries(body.positions ?? {}).map(([noteId, at]) => ({
+      noteId,
+      x: Number(at?.x),
+      y: Number(at?.y),
+    }))
+
+    return context.json({ saved: saveLayout(project.handle.db, positions) })
+  })
+
+  app.delete('/projects/:name/layout', (context) => {
+    const project = pool.acquire(context.req.param('name'))
+
+    return context.json({ cleared: clearLayout(project.handle.db) })
   })
 
   // ---- writes ------------------------------------------------------------

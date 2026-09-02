@@ -8,6 +8,8 @@ import type { Screen, Surface } from '../app.js'
 import { el } from '../dom.js'
 import { markdownEditor } from '../editor.js'
 import type { NoteChoice } from '../editor.js'
+import { LayoutStore, resolveLayout } from '../layout.js'
+import type { Position } from '../layout.js'
 import { renderMarkdown } from '../markdown.js'
 import { isDark, onThemeChange } from '../theme.js'
 
@@ -166,6 +168,15 @@ interface Emphasis {
 
 export function graphScreen(): Screen {
   let live: Sigma | null = null
+  let layout: LayoutStore | null = null
+
+  // Registered once, for the life of the page: a tab closed mid-arrangement is
+  // the case the local copy exists for, but flushing here means the other
+  // machines see it too. `keepalive`, because an ordinary request would be
+  // cancelled by the unload.
+  window.addEventListener('pagehide', () => {
+    void layout?.flush(true)
+  })
 
   return {
     id: 'graph',
@@ -175,6 +186,12 @@ export function graphScreen(): Screen {
     leave(): void {
       live?.kill()
       live = null
+
+      // Leaving the screen is the commonest way a drag would be lost, so the
+      // pending moves go out now rather than waiting for a timer that dies
+      // with the screen.
+      void layout?.flush()
+      layout = null
     },
 
     async render(surface: Surface): Promise<void> {
@@ -197,6 +214,8 @@ export function graphScreen(): Screen {
 
       const legend = heatLegend()
 
+      const placedCount = Object.keys(view.layout).length
+
       surface.bar.append(
         query,
         legend,
@@ -204,14 +223,33 @@ export function graphScreen(): Screen {
           class: 'hint',
           text: `${view.nodes.length} notes, ${view.edges.length} links, ${view.phantoms.length} dangling`,
         }),
+        el('button', {
+          text: 'Arrange again',
+          title:
+            placedCount === 0
+              ? 'Nothing has been placed by hand yet'
+              : `Forget ${placedCount} placed note(s) and lay the graph out from scratch`,
+          disabled: placedCount === 0,
+          onclick: async () => {
+            try {
+              await layout?.reset()
+              surface.reload()
+            } catch (error) {
+              surface.fail(error)
+            }
+          },
+        }),
       )
 
       const split = el('div', { class: 'split graph-split' }, [canvas, handle, detail])
       surface.body.append(split)
       applyStoredWidth(split)
 
+      const placed = resolveLayout(surface.project, view.layout)
+      layout = new LayoutStore(surface.project).onError((error) => surface.fail(error))
+
       // Sigma measures the container, so it has to be in the document first.
-      const graph = build(view)
+      const graph = build(view, placed)
       const renderer = new Sigma(graph, canvas, {
         defaultEdgeType: 'line',
         labelDensity: 0.6,
@@ -227,7 +265,7 @@ export function graphScreen(): Screen {
       const panel: Panel = { surface, detail, graph, notes: listing.notes }
 
       wireEmphasis(renderer, graph, emphasis)
-      wireDragging(panel, renderer, emphasis)
+      wireDragging(panel, renderer, emphasis, layout)
       wireHighlight(surface, renderer, query, legend, emphasis)
 
       showHelp(detail)
@@ -235,23 +273,36 @@ export function graphScreen(): Screen {
   }
 }
 
-/** The graphology graph, laid out and coloured. */
-function build(view: GraphView): Graph {
+/**
+ * The graphology graph, laid out and coloured.
+ *
+ * A note that has been placed by hand keeps its position and is **fixed**, so
+ * the force-directed pass arranges everything else around it rather than
+ * sweeping it away. That is the whole point of remembering the layout: a new
+ * note finds its own spot near its neighbours, and the picture somebody built
+ * stays the picture they built.
+ */
+function build(view: GraphView, placed: ReadonlyMap<string, Position>): Graph {
   const graph = new Graph({ multi: false, type: 'directed' })
 
   for (const node of view.nodes) {
+    const at = placed.get(node.id)
+
     graph.addNode(node.id, {
       label: node.title,
       title: node.title,
       phantom: false,
       degree: node.degree,
       size: 4 + Math.min(10, Math.sqrt(node.degree) * 3),
-      x: Math.cos(hash(node.id)) * 100,
-      y: Math.sin(hash(node.id)) * 100,
+      x: at?.x ?? Math.cos(hash(node.id)) * 100,
+      y: at?.y ?? Math.sin(hash(node.id)) * 100,
+      fixed: at !== undefined,
     })
   }
 
   for (const node of view.phantoms) {
+    const at = placed.get(node.id)
+
     graph.addNode(node.id, {
       label: node.id,
       title: `${node.id} — not a note here`,
@@ -259,8 +310,9 @@ function build(view: GraphView): Graph {
       degree: node.degree,
       size: 3,
       color: '#9aa3af',
-      x: Math.cos(hash(node.id)) * 140,
-      y: Math.sin(hash(node.id)) * 140,
+      x: at?.x ?? Math.cos(hash(node.id)) * 140,
+      y: at?.y ?? Math.sin(hash(node.id)) * 140,
+      fixed: at !== undefined,
     })
   }
 
@@ -289,7 +341,14 @@ function build(view: GraphView): Graph {
     })
   }
 
-  if (graph.order > 1) {
+  // Nothing to arrange when every node is already placed, and running the
+  // layout anyway would be a second of work to produce the same picture.
+  const unplaced = graph.reduceNodes(
+    (count, _id, attributes) => count + (attributes['fixed'] === true ? 0 : 1),
+    0,
+  )
+
+  if (graph.order > 1 && unplaced > 0) {
     forceAtlas2.assign(graph, {
       iterations: Math.max(50, Math.min(400, graph.order * 4)),
       settings: { ...forceAtlas2.inferSettings(graph), gravity: 1.2 },
@@ -564,7 +623,12 @@ function shiftHeld(original: MouseEvent | TouchEvent): boolean {
  * the edge of the layout: without it sigma recomputes the bounding box, and
  * dragging one node outward zooms the whole graph out from under the hand.
  */
-function wireDragging(panel: Panel, renderer: Sigma, emphasis: Emphasis): void {
+function wireDragging(
+  panel: Panel,
+  renderer: Sigma,
+  emphasis: Emphasis,
+  layout: LayoutStore,
+): void {
   const { surface, detail, graph } = panel
 
   const camera = renderer.getCamera()
@@ -577,6 +641,15 @@ function wireDragging(panel: Panel, renderer: Sigma, emphasis: Emphasis): void {
   let origin: { x: number; y: number } | null = null
 
   const finish = (): void => {
+    // Where it was let go is where it stays. Written locally at once and
+    // synced on a timer, so a reload or a closed tab keeps it either way.
+    if (held !== null && moved && !linking) {
+      layout.remember(held, {
+        x: Number(graph.getNodeAttribute(held, 'x')),
+        y: Number(graph.getNodeAttribute(held, 'y')),
+      })
+    }
+
     held = null
     linking = false
     origin = null
@@ -615,6 +688,9 @@ function wireDragging(panel: Panel, renderer: Sigma, emphasis: Emphasis): void {
       const position = renderer.viewportToGraph(event)
       graph.setNodeAttribute(held, 'x', position.x)
       graph.setNodeAttribute(held, 'y', position.y)
+      // Placed by hand from now on: a later layout arranges around it rather
+      // than over it.
+      graph.setNodeAttribute(held, 'fixed', true)
     }
 
     // Sigma would otherwise treat this as a camera gesture, and the browser as

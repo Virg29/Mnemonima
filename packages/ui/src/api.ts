@@ -27,7 +27,15 @@ export class ApiError extends Error {
 
 const token = new URLSearchParams(location.search).get('token') ?? ''
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function call<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  // `keepalive` is for a request sent as the page goes away — the graph
+  // flushing the positions somebody just dragged. `sendBeacon` cannot carry the
+  // bearer token, so this is the only way to survive an unload.
+  options: { keepalive?: boolean } = {},
+): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: {
@@ -35,6 +43,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(options.keepalive === true ? { keepalive: true } : {}),
   })
 
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>
@@ -159,6 +168,8 @@ export interface GraphView {
   nodes: { id: string; title: string; degree: number }[]
   phantoms: { id: string; title: string; degree: number }[]
   edges: { from: string; to: string; resolved: boolean }[]
+  /** Where notes have been placed by hand. A note with no entry is unplaced. */
+  layout: Record<string, { x: number; y: number }>
 }
 
 export interface ProjectConfig {
@@ -351,6 +362,16 @@ export const api = {
     call('POST', `/projects/${encode(project)}/links`, { author: 'ui', from, to, anchor }),
 
   graph: (project: string): Promise<GraphView> => call('GET', `/projects/${encode(project)}/graph`),
+
+  saveLayout: (
+    project: string,
+    positions: Record<string, { x: number; y: number }>,
+    options: { keepalive?: boolean } = {},
+  ): Promise<{ saved: number }> =>
+    call('PUT', `/projects/${encode(project)}/layout`, { positions }, options),
+
+  clearLayout: (project: string): Promise<{ cleared: number }> =>
+    call('DELETE', `/projects/${encode(project)}/layout`),
 
   config: (project: string): Promise<ConfigView> =>
     call('GET', `/projects/${encode(project)}/config`),
