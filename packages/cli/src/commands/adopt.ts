@@ -36,6 +36,10 @@ export function registerAdoptCommand(program: Command): void {
     .option('-p, --project <name>', 'project name')
     .option('--write', 'actually create the notes; without it this is a dry run')
     .option('--import-anyway', 'bring non-English files in as well, instead of skipping them')
+    .option(
+      '--only <path...>',
+      'take only these paths, relative to --dir; everything else is left behind',
+    )
     .option('--json', 'machine readable output')
     .addHelpText(
       'after',
@@ -52,6 +56,7 @@ export function registerAdoptCommand(program: Command): void {
         dir: string
         project?: string
         write?: boolean
+        only?: string[]
         importAnyway?: boolean
         json?: boolean
       }) => {
@@ -61,6 +66,7 @@ export function registerAdoptCommand(program: Command): void {
           const report = adoptVault(context.project.db, context.config, context.project.dir, options.dir, {
             dryRun: options.write !== true,
             importAnyway: options.importAnyway,
+            only: options.only,
             author: 'adopt',
           })
 
@@ -88,11 +94,23 @@ function printReport(report: AdoptReport): void {
     ['', 'FILES'],
     [
       [report.dryRun ? 'to create' : 'created', String(report.created)],
+      [report.dryRun ? 'to claim' : 'claimed', String(report.claimed)],
       [report.dryRun ? 'to update' : 'updated', String(report.updated)],
       ['unchanged', String(report.unchanged)],
       ['skipped', String(report.skipped)],
     ],
   )
+
+  const claimed = report.files.filter((file) => file.action === 'claimed')
+  if (claimed.length > 0) {
+    printLine()
+    printLine('Taken over by notes already here:')
+    printTable(
+      ['FILE', 'NOTE', 'TITLE'],
+      claimed.map((file) => [truncate(file.sourcePath, 40), file.noteId ?? '', truncate(file.title, 34)]),
+    )
+    printNote('matched on the title, so the id and the history of each are kept')
+  }
 
   const skipped = report.files.filter((file) => file.action === 'skipped')
   if (skipped.length > 0) {

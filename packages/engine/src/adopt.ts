@@ -1,9 +1,23 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { BadRequestError, findBlockedScript, hashBody, stripCode } from '@mnemonima/core'
+import {
+  BadRequestError,
+  findBlockedScript,
+  hashBody,
+  parseMarkdown,
+  parseTree,
+  stripCode,
+} from '@mnemonima/core'
 import type { ProjectConfig } from '@mnemonima/core'
-import { addAlias, adoptedByPath, listAliases, projectDataDir, recordAdopted } from '@mnemonima/store'
-import type { AdoptedRow, Db } from '@mnemonima/store'
+import {
+  addAlias,
+  adoptedByPath,
+  listAliases,
+  listNotes,
+  projectDataDir,
+  recordAdopted,
+} from '@mnemonima/store'
+import type { Db } from '@mnemonima/store'
 import { normaliseSourcePath } from '@mnemonima/store'
 import { exportDirectory } from './bridge.js'
 import { writeNewNote, writeNoteBody } from './notes.js'
@@ -30,7 +44,7 @@ import { writeNewNote, writeNoteBody } from './notes.js'
  *    so what will happen can be read before it does.
  */
 
-export type AdoptAction = 'created' | 'updated' | 'unchanged' | 'skipped'
+export type AdoptAction = 'created' | 'claimed' | 'updated' | 'unchanged' | 'skipped'
 
 export interface AdoptedFile {
   readonly sourcePath: string
@@ -46,6 +60,8 @@ export interface AdoptReport {
   readonly dryRun: boolean
   readonly files: readonly AdoptedFile[]
   readonly created: number
+  /** Files taken over by a note that was already here, matched on the title. */
+  readonly claimed: number
   readonly updated: number
   readonly unchanged: number
   readonly skipped: number
@@ -61,6 +77,13 @@ export interface AdoptOptions {
   readonly batchId?: string | null | undefined
   /** Directory names never descended into. */
   readonly ignore?: readonly string[] | undefined
+  /**
+   * Path prefixes, relative to the root, to take. Everything else is left
+   * behind. Given so that a repository can be adopted from its own root — which
+   * is what makes a link from `.claude/plan.md` to `docs/mechanics/warp.md`
+   * resolve — without swallowing the generated half of it.
+   */
+  readonly only?: readonly string[] | undefined
 }
 
 const DEFAULT_IGNORE = ['.git', '.mnemonima', 'node_modules', '.obsidian', '.trash']
@@ -90,10 +113,18 @@ export function findMarkdown(root: string, ignore: readonly string[] = DEFAULT_I
   return found
 }
 
-/** The first level-one heading, or the filename when there is none. */
+/**
+ * The title this file will actually get.
+ *
+ * Derived the same way the writer derives it — through mdast, not a regular
+ * expression over the source — because the two have to agree. They did not: a
+ * heading reading `What else belongs in \`api/\`` gave the writer *What else
+ * belongs in api/* and gave the matcher the version with the backticks, so a
+ * note that was already there was not recognised and would have been duplicated.
+ */
 function titleOf(body: string, file: string): string {
-  const heading = /^#\s+(.+)$/m.exec(body)
-  const fromHeading = heading?.[1]?.trim()
+  const parsed = parseMarkdown(body, parseTree(body))
+  const fromHeading = parsed.title?.trim()
 
   return fromHeading !== undefined && fromHeading !== ''
     ? fromHeading
@@ -155,11 +186,33 @@ export function adoptVault(
     path.resolve(dir),
   )
 
-  const files = findMarkdown(resolved, options.ignore ?? DEFAULT_IGNORE).filter(
-    (file) => !ours.some((dir) => file === dir || file.startsWith(dir + path.sep)),
-  )
+  const only = (options.only ?? []).map((prefix) => normaliseSourcePath(prefix))
+
+  const files = findMarkdown(resolved, options.ignore ?? DEFAULT_IGNORE)
+    .filter((file) => !ours.some((dir) => file === dir || file.startsWith(dir + path.sep)))
+    .filter((file) => {
+      if (only.length === 0) return true
+      const relative = normaliseSourcePath(path.relative(resolved, file))
+      return only.some((prefix) => relative === prefix || relative.startsWith(`${prefix}/`))
+    })
 
   const known = adoptedByPath(db)
+
+  // Notes already here that no file has claimed yet, by title.
+  //
+  // A project can already hold the notes a vault is about — written by hand
+  // before `adopt` existed, or by an agent. Creating a second copy of each
+  // would be the wrong answer twice over: duplicates in search, and new ids for
+  // notes that already have ids other things reference. Titles match because
+  // they came from the same `# heading` the files still carry.
+  const claimable = new Map<string, string>()
+  for (const note of listNotes(db, { status: 'any', limit: -1 })) {
+    const key = note.title.trim().toLowerCase()
+    if (key !== '' && !claimable.has(key)) claimable.set(key, note.id)
+  }
+  for (const row of known.values()) {
+    for (const [key, noteId] of claimable) if (noteId === row.noteId) claimable.delete(key)
+  }
 
   const results: AdoptedFile[] = []
 
@@ -194,10 +247,16 @@ export function adoptVault(
       continue
     }
 
+    // A note already here whose title is this file's, taken over rather than
+    // duplicated. Claimed once: two files with the same heading must not both
+    // land on it.
+    const claimedId = existing === undefined ? claimable.get(title.trim().toLowerCase()) : undefined
+    if (claimedId !== undefined) claimable.delete(title.trim().toLowerCase())
+
     results.push({
       sourcePath,
-      action: existing === undefined ? 'created' : 'updated',
-      noteId: existing?.noteId ?? null,
+      action: existing !== undefined ? 'updated' : claimedId !== undefined ? 'claimed' : 'created',
+      noteId: existing?.noteId ?? claimedId ?? null,
       title,
       reason: null,
     })
@@ -210,9 +269,12 @@ export function adoptVault(
     const writeConfig: ProjectConfig =
       violation === null ? config : { ...config, language: { ...config.language, gate: 'off' } }
 
-    const noteId = existing === undefined
-      ? create(db, writeConfig, body, sourcePath, options)
-      : update(db, writeConfig, existing, body, options)
+    const target = existing?.noteId ?? claimedId
+
+    const noteId =
+      target === undefined
+        ? create(db, writeConfig, body, sourcePath, options)
+        : updateNote(db, writeConfig, target, sourcePath, body, options)
 
     results[results.length - 1] = {
       ...results[results.length - 1]!,
@@ -225,6 +287,7 @@ export function adoptVault(
     dryRun,
     files: results,
     created: results.filter((file) => file.action === 'created').length,
+    claimed: results.filter((file) => file.action === 'claimed').length,
     updated: results.filter((file) => file.action === 'updated').length,
     unchanged: results.filter((file) => file.action === 'unchanged').length,
     skipped: results.filter((file) => file.action === 'skipped').length,
@@ -250,22 +313,23 @@ function create(
   return written.note.id
 }
 
-function update(
+function updateNote(
   db: Db,
   config: ProjectConfig,
-  existing: AdoptedRow,
+  noteId: string,
+  sourcePath: string,
   body: string,
   options: AdoptOptions,
 ): string {
-  writeNoteBody(db, config, existing.noteId, body, {
+  writeNoteBody(db, config, noteId, body, {
     author: options.author ?? 'adopt',
     batchId: options.batchId ?? null,
   })
 
-  recordAdopted(db, existing.noteId, existing.sourcePath, hashBody(body))
-  rememberOriginalName(db, existing.noteId, existing.sourcePath)
+  recordAdopted(db, noteId, sourcePath, hashBody(body))
+  rememberOriginalName(db, noteId, sourcePath)
 
-  return existing.noteId
+  return noteId
 }
 
 /**

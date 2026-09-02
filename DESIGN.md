@@ -1227,6 +1227,33 @@ Two defects only that scale showed, both fixed:
   back. 241 files became 482 notes. `adopt` now takes the project directory as a
   positional argument so its own output cannot be forgotten.
 
+**A note that is already here is taken over, not duplicated.** The case is a
+project that has been used before `adopt` existed: an agent read the vault,
+wrote its own notes about it, and those notes carry the same `# heading` the
+files do. Creating a second copy of each would be wrong twice — duplicates in
+search, and fresh ids for notes that other notes already link to. So a file
+whose title matches a note that no file has claimed yet **claims** it: the body
+is written as a new revision of that note, and the id, the aliases and the whole
+revision history stay. `claimed` is its own action in the report, listed with
+the ids, so what is about to be taken over can be read before it is.
+
+The title has to be derived the way the *writer* derives it — through mdast, not
+a regular expression over the source. It was not, and a heading reading
+``What else belongs in `api/` `` gave the writer *What else belongs in api/* and
+the matcher the version with the backticks. One live dry run showed a note that
+was plainly already there queued for creation.
+
+**`--only <path...>`** takes a subset, relative to `--dir`. Given because the
+directory worth adopting from is often the repository root — that is what makes
+a link from `.claude/plan.md` to `docs/mechanics/warp.md` resolve — while half
+of what is under it is generated and does not belong in a knowledge base.
+
+**Measured on the live project it was written for**, 30 files under
+`docs/mechanics`, `.claude` and one README: 29 claimed, 1 created. Links went
+from 215 with 118 dangling to 142 with **9**, and the nine point at the files
+deliberately left behind. The two notes that exist only in the database were
+untouched, at the revision they held.
+
 Do not mix it with the ordinary `import` (§5.2), which works **only** with our
 frontmatter.
 
