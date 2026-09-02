@@ -4,6 +4,7 @@ import {
   BadRequestError,
   findBlockedScript,
   hashBody,
+  parseLinks,
   parseMarkdown,
   parseTree,
   stripCode,
@@ -12,6 +13,7 @@ import type { ProjectConfig } from '@mnemonima/core'
 import {
   addAlias,
   adoptedByPath,
+  getNote,
   listAliases,
   listNotes,
   projectDataDir,
@@ -53,6 +55,11 @@ export interface AdoptedFile {
   readonly title: string
   /** Set when the file was skipped, saying which rule skipped it. */
   readonly reason: string | null
+  /**
+   * Link targets in the stored note that the file does not have, and that
+   * writing the file over it would therefore drop.
+   */
+  readonly losing: readonly string[]
 }
 
 export interface AdoptReport {
@@ -65,6 +72,8 @@ export interface AdoptReport {
   readonly updated: number
   readonly unchanged: number
   readonly skipped: number
+  /** Links that exist only in the database and would be written over. */
+  readonly losingLinks: number
   /** Basenames claimed by more than one file, which make a link ambiguous. */
   readonly collisions: readonly { readonly name: string; readonly paths: string[] }[]
 }
@@ -236,6 +245,7 @@ export function adoptVault(
         reason:
           `not English: ${violation.script} character "${violation.char}" at line ` +
           `${violation.position.line}`,
+        losing: [],
       })
       continue
     }
@@ -243,7 +253,14 @@ export function adoptVault(
     const existing = known.get(sourcePath)
 
     if (existing !== undefined && existing.bodyHash === hashBody(body)) {
-      results.push({ sourcePath, action: 'unchanged', noteId: existing.noteId, title, reason: null })
+      results.push({
+        sourcePath,
+        action: 'unchanged',
+        noteId: existing.noteId,
+        title,
+        reason: null,
+        losing: [],
+      })
       continue
     }
 
@@ -253,12 +270,15 @@ export function adoptVault(
     const claimedId = existing === undefined ? claimable.get(title.trim().toLowerCase()) : undefined
     if (claimedId !== undefined) claimable.delete(title.trim().toLowerCase())
 
+    const target = existing?.noteId ?? claimedId ?? null
+
     results.push({
       sourcePath,
       action: existing !== undefined ? 'updated' : claimedId !== undefined ? 'claimed' : 'created',
-      noteId: existing?.noteId ?? claimedId ?? null,
+      noteId: target,
       title,
       reason: null,
+      losing: target === null ? [] : linksOnlyInTheNote(db, target, body),
     })
 
     if (dryRun) continue
@@ -269,10 +289,8 @@ export function adoptVault(
     const writeConfig: ProjectConfig =
       violation === null ? config : { ...config, language: { ...config.language, gate: 'off' } }
 
-    const target = existing?.noteId ?? claimedId
-
     const noteId =
-      target === undefined
+      target === null
         ? create(db, writeConfig, body, sourcePath, options)
         : updateNote(db, writeConfig, target, sourcePath, body, options)
 
@@ -291,6 +309,7 @@ export function adoptVault(
     updated: results.filter((file) => file.action === 'updated').length,
     unchanged: results.filter((file) => file.action === 'unchanged').length,
     skipped: results.filter((file) => file.action === 'skipped').length,
+    losingLinks: results.reduce((total, file) => total + file.losing.length, 0),
     collisions: findCollisions(files, resolved),
   }
 }
@@ -348,4 +367,30 @@ function rememberOriginalName(db: Db, noteId: string, sourcePath: string): void 
   )
 
   if (!already) addAlias(db, noteId, name)
+}
+
+/**
+ * Links the stored note has that the file does not.
+ *
+ * Adoption replaces a body with the file's, and links are derived from bodies
+ * (DESIGN.md 3.4) — so a `## Related` section that only ever existed in the
+ * database goes with it. That is what happened on the migration this was
+ * written for: 25 of 30 rewritten notes lost their section, 93 hand-made links
+ * in all, and the dry run said nothing about it.
+ *
+ * Reported rather than prevented. The file *is* the source being adopted, and
+ * quietly merging our links back into it would leave two ideas of what the
+ * note's body is. Saying what will go, before it goes, is the honest half.
+ */
+function linksOnlyInTheNote(db: Db, noteId: string, incoming: string): string[] {
+  const note = getNote(db, noteId)
+  if (note === null) return []
+
+  const inFile = new Set(parseLinks(incoming).map((link) => link.target.trim().toLowerCase()))
+
+  const losing = parseLinks(note.body)
+    .map((link) => link.target.trim())
+    .filter((target) => !inFile.has(target.toLowerCase()))
+
+  return [...new Set(losing)]
 }

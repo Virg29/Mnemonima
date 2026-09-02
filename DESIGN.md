@@ -1421,6 +1421,19 @@ from 215 with 118 dangling to 142 with **9**, and the nine point at the files
 deliberately left behind. The two notes that exist only in the database were
 untouched, at the revision they held.
 
+
+**A run says what it will write over.** Adoption replaces a body with the
+file's, and links are derived from bodies (§3.4) — so a `## Related` section
+that only ever existed in the database goes with it. That is what happened on
+the migration this was written for: **25 of 30 rewritten notes lost their
+section, 93 hand-made links in all**, and the dry run said nothing about it. The
+report now names them, note by note and target by target, before anything is
+written.
+
+Reported rather than prevented. The file *is* the source being adopted, and
+quietly merging our links back into it would leave two ideas of what the note's
+body is. Saying what will go, before it goes, is the honest half — and every one
+of them is in the revision log either way, which `mnemonima diff` can now show.
 Do not mix it with the ordinary `import` (§5.2), which works **only** with our
 frontmatter.
 

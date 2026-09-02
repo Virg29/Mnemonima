@@ -359,3 +359,64 @@ describe('deriving the title', () => {
     expect(report.created).toBe(0)
   })
 })
+
+describe('links that only exist in the database', () => {
+  let sandbox: Sandbox
+  let db: Db
+  let config: ProjectConfig
+  let vault: string
+  let projectDir: string
+
+  beforeEach(() => {
+    sandbox = createSandbox()
+    vault = path.join(sandbox.projects, 'vault')
+    projectDir = path.join(sandbox.projects, 'sl')
+
+    const project = createProject({ name: 'Shader Lab', dir: projectDir })
+    db = project.db
+    config = getConfig(db)
+    config.model.active = TEST_MODEL_ID
+    setConfig(db, config)
+
+    fs.mkdirSync(vault, { recursive: true })
+  })
+
+  afterEach(() => {
+    db.close()
+    sandbox.cleanup()
+  })
+
+  it('says which links a run would write over, before it writes', () => {
+    // The live migration this was written for: 25 of 30 rewritten notes lost a
+    // `## Related` section that only ever existed in the database, 93 links in
+    // all, and the dry run said nothing.
+    const file = '# Shaders\n\nProse.\n'
+    fs.writeFileSync(path.join(vault, 'shaders.md'), file)
+
+    const note = writeNewNote(db, config, `${file}\n## Related\n\n- [[SL-0002 Uniforms]]\n`, {
+      author: 'cli',
+    }).note
+
+    const report = adoptVault(db, config, projectDir, vault)
+
+    expect(report.dryRun).toBe(true)
+    expect(report.losingLinks).toBe(1)
+    expect(report.files[0]?.noteId).toBe(note.id)
+    expect(report.files[0]?.losing).toEqual(['SL-0002 Uniforms'])
+  })
+
+  it('says nothing when the file carries the same links', () => {
+    const body = '# Shaders\n\nSee [[SL-0002 Uniforms]].\n'
+    fs.writeFileSync(path.join(vault, 'shaders.md'), body)
+    writeNewNote(db, config, body, { author: 'cli' })
+
+    expect(adoptVault(db, config, projectDir, vault).losingLinks).toBe(0)
+  })
+
+  it('says nothing for a file that becomes a new note', () => {
+    // Nothing is being written over, so nothing can be lost.
+    fs.writeFileSync(path.join(vault, 'new.md'), '# Something new\n\nProse.\n')
+
+    expect(adoptVault(db, config, projectDir, vault).losingLinks).toBe(0)
+  })
+})

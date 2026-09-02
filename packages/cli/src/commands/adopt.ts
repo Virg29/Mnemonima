@@ -98,6 +98,7 @@ function printReport(report: AdoptReport): void {
       [report.dryRun ? 'to update' : 'updated', String(report.updated)],
       ['unchanged', String(report.unchanged)],
       ['skipped', String(report.skipped)],
+      [report.dryRun ? 'links at risk' : 'links dropped', String(report.losingLinks)],
     ],
   )
 
@@ -110,6 +111,29 @@ function printReport(report: AdoptReport): void {
       claimed.map((file) => [truncate(file.sourcePath, 40), file.noteId ?? '', truncate(file.title, 34)]),
     )
     printNote('matched on the title, so the id and the history of each are kept')
+  }
+
+  const losing = report.files.filter((file) => file.losing.length > 0)
+  if (losing.length > 0) {
+    printLine()
+    printLine(
+      report.dryRun
+        ? 'Links that only exist in the database, and would be written over:'
+        : 'Links that only existed in the database, and were written over:',
+    )
+    printTable(
+      ['NOTE', 'LINKS', 'TARGETS'],
+      losing.map((file) => [
+        file.noteId ?? '',
+        String(file.losing.length),
+        truncate(file.losing.join(', '), 46),
+      ]),
+    )
+    printNote(
+      'a note body is replaced by the file, and links are derived from bodies, so a ' +
+        '## Related section that never reached the file goes with it. Every one is in ' +
+        'the revision log — `mnemonima diff <id>` shows what a run took out.',
+    )
   }
 
   const skipped = report.files.filter((file) => file.action === 'skipped')
