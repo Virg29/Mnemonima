@@ -27,3 +27,14 @@ Thumbs.db
 # scratch
 .tmp/
 *.local.json
+
+# A throwaway copy of somebody's real vault, for trying `adopt` against
+# something that is not a fixture. Ignored here rather than in
+# .git/info/exclude, which is local to one clone and would not travel: the
+# directory holds an operator's notes, and the rule protecting it has to be
+# in the repository that the working tree belongs to.
+smokingroom/
+
+# Working notes for whoever is editing this repository, kept out of it on
+# purpose. Same reasoning: the rule is shared even though the file is not.
+CLAUDE.md

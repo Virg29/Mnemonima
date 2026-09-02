@@ -8,21 +8,121 @@ Breaking changes to the public contract (CLI flags, `find` JSON schema, MCP tool
 signatures, exported frontmatter schema) are recorded here even before the first
 public release.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-02
 
 ### Added
 
+- MCP: `mnemonima_explain` returns every passage of one note that a query
+  matched, with the two halves of each score and the words the lexical pass
+  looked for. `scoring` marks the passages fusion actually read — the rest reach
+  the score through a count, and treating them as evidence is the mistake the
+  field prevents.
+- MCP: `mnemonima_doctor` and `mnemonima_config`, both read-only. An agent can
+  now check what it left behind, and see `mcp.allowDestructive` and
+  `index.debounceSec` rather than guessing at them.
+- The page shows the same thing: opening a hit from the search lab carries the
+  query into the note screen and marks the body — matched passages, a bar
+  splitting the score into words and meaning, and the query words underlined.
+  The graph panel marks it too.
+- `mnemonima get <id> --rev <n>` and `mnemonima diff <id> [--from a] [--to b]`,
+  with the revision log and its diffs in the page. Reading an old body never
+  restores it; `revert` is still the only thing that changes a note.
+- Node positions on the graph are remembered, in `note_layout` and in the
+  browser. Dragging moves a node, hovering lights up what it is connected to,
+  the panel is resizable and edits the note in place.
+- A theme switch: light, dark, or follow the system.
+- `adopt` reports the links a run would write over before it writes them.
+
+### Fixed
+
+- The layout sync dropped a drag that landed while its request was in flight:
+  the id was cleared as acknowledged though the newer position never went out,
+  and the note reverted on the next load.
+- `GET /notes/:id/explain` accepted any `mode`; `exact`, `id`, `graph` and typos
+  fell through to hybrid weights and came back labelled with the mode that was
+  asked for. Both the route and the engine refuse them now.
+- `GET /notes/:id/revisions/:rev` coerced an unparseable segment to `0`, which
+  means "the note as it stands" — so a mistyped request answered with today's
+  body under a 200. Both revision routes parse rather than coerce.
+- The diff's size guard capped lines when the cost is the product: two bodies
+  just under the cap that differ throughout asked for a 64 MB table. There is a
+  cell cap now, measured after the common ends are stripped.
+- A diff too large to compare returned a line for every line of both bodies,
+  which made the guard against a frozen page produce twice an ordinary diff. It
+  returns no hunks and says why.
+- `Diff.identical` compared raw text, so a body whose line endings changed read
+  as different with an empty diff.
+- Saving a note in the graph panel dropped its edges into phantom nodes, hiding
+  the dangling links the graph draws phantoms in order to show.
+- The search explanation was fetched after the note screen rendered and appended
+  to the toolbar, which is shared: navigating away during the request dropped it
+  onto the next screen.
+- The graph never released its sigma renderer, so every visit left one measuring
+  a removed container until the browser ran out of WebGL contexts and the graph
+  came up blank.
+- The graph's dimming, labels and resting edge colours were fixed light values,
+  which on the dark theme made unmatched notes brighter than the hits.
+
+## [0.1.0] — 2026-09-02
+
+The first version number that means anything: ten stages in, and run against a
+real project rather than a fixture at every one of them.
+
+### Added in stage 8 — the web UI
+
+- `packages/ui`, a Vite SPA the daemon serves: projects, a search lab with every
+  knob of `DESIGN.md` 8.5 live against a warm index, the sigma graph with
+  link-by-drag, a CodeMirror editor, terms, spaces, settings and health.
+- The daemon's administration API: configuration by dotted path, spaces and
+  their activation, `doctor`, revisions and batches, project creation.
+- A knob is a per-query override, not a save: nothing is written until Save and
+  no index is rebuilt.
+
+### Added in stage 9 — the eval harness
+
+- A golden set per project, `recall@k`, MRR and `nDCG@k`, run history, and a
+  random search over the weights.
+- `--tune` holds half the set back by default and decides on that half alone. On
+  the searched half it reaches a perfect score every time; on the held-back half
+  it moved nothing twice and went down once. A win on the set it tuned on is not
+  a win.
+
+### Added in stage 10 — adopt
+
+- `mnemonima adopt --dir <path>` pulls in a directory of markdown that knows
+  nothing about us. Bodies are stored exactly as written, the original basename
+  becomes an alias, and a repeat run updates rather than duplicates.
+- A note already here is **claimed**, not duplicated: a file whose title matches
+  an unclaimed note writes a new revision of it, so the id, the aliases and the
+  history survive.
+- `--only <path...>` takes a subset, because the directory worth adopting from
+  is often a repository root while half of what is under it is generated.
+
+### Fixed
+
+- The English gate lost its statistical layer. It rejected the English query
+  *why does a particle break rendering when it opens its own buffer* — `franc`
+  ranked Dutch 1.000 and did not rank English at all, and the code read that
+  absence as proof rather than as too little text for trigram statistics.
+  Queries are short by nature and search is the primary verb.
+- Project artefacts moved under one `.mnemonima/` subdirectory of the project
+  directory, so we add exactly one entry to a folder that is the operator's.
+- `adopt` swallowed its own export and doubled a vault, 241 files into 482
+  notes; and link resolution read a target as a path from the note that wrote
+  it, taking 348 dangling links of 1265 down to one.
+
+### Added in stages 0 and 1 — the indexing core
+
 - Workspace skeleton: pnpm monorepo, TypeScript, tsup, vitest.
 - `@mnemonima/core`: shared types, note id derivation, project configuration
-  defaults, error taxonomy with CLI exit codes, English script gate (layer 1).
+  defaults, error taxonomy with CLI exit codes, the English script gate.
 - `@mnemonima/store`: SQLite schema (notes, aliases, tags, links, terms,
   note_terms, spaces, chunks, embeddings, note_revisions, orama_snapshots),
   forward-only migration runner, project registry.
 - `mnemonima` CLI: `project`, `new`, `edit`, `get`, `list`, `delete`, `history`,
   `index`, `find`, `models`, `config`.
 - `@mnemonima/core`: markdown parsing to blocks and outline, dual-strategy
-  chunking, content hashing, Float32 vector storage, the three-layer English
-  gate, the embedding model registry, embedding spaces and the `Embedder`
+  chunking, content hashing, Float32 vector storage, the English script gate, the embedding model registry, embedding spaces and the `Embedder`
   interface with a transformers.js implementation and a deterministic offline
   one.
 - `@mnemonima/store`: repositories for notes with revisions, embedding spaces,
@@ -122,7 +222,7 @@ public release.
   process when it cannot.
 - `daemon.autoStart` in the project configuration.
 
-### Added — a first web UI
+### Added in stage 5 — a first web UI
 
 - `mnemonima ui` opens a single-page interface served by the daemon at `/ui`:
   the projects it holds in memory, a search panel with the hybrid balance and a
