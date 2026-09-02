@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { mergeLayout } from './layout.js'
-import type { Stored } from './layout.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const saveLayout = vi.fn()
+
+vi.mock('./api.js', () => ({ api: { saveLayout: (...args: unknown[]) => saveLayout(...args) } }))
+
+const { LayoutStore, mergeLayout } = await import('./layout.js')
+type Stored = import('./layout.js').Stored
+type Position = import('./layout.js').Position
 
 /**
  * The merge rule, which is where the two stores meet.
@@ -61,5 +67,93 @@ describe('merging the stored layout with the server', () => {
   it('is empty when neither side has anything', () => {
     // Which is the signal to arrange the graph from scratch.
     expect(mergeLayout({}, stored({})).size).toBe(0)
+  })
+})
+
+/**
+ * The flush, which is where a drag can be lost.
+ *
+ * `localStorage` is stubbed rather than mocked away: the store's whole job is
+ * what survives in it between a move and an acknowledgement, so a fake that did
+ * not actually persist would test nothing.
+ */
+describe('flushing pending moves', () => {
+  let sent: Record<string, Position>[]
+
+  beforeEach(() => {
+    sent = []
+
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    })
+
+    vi.stubGlobal('window', {
+      setTimeout: () => 1,
+      clearTimeout: () => undefined,
+    })
+
+    saveLayout.mockImplementation(async (_project: string, positions: Record<string, Position>) => {
+      sent.push(positions)
+      return { saved: Object.keys(positions).length }
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    saveLayout.mockReset()
+  })
+
+  it('sends what was moved and clears it once acknowledged', async () => {
+    const store = new LayoutStore('p')
+    store.remember('SL-0001', { x: 1, y: 2 })
+
+    await store.flush()
+
+    expect(sent).toEqual([{ 'SL-0001': { x: 1, y: 2 } }])
+    expect(JSON.parse(localStorage.getItem('mnemonima.layout.p')!).pending).toEqual([])
+  })
+
+  it('keeps a move made while the flush was in flight', async () => {
+    // The race the two-store design exists to survive. Clearing by id marked
+    // the second position acknowledged although it never went out, the next
+    // flush found an empty list, and the note reverted on the following load.
+    const store = new LayoutStore('p')
+    store.remember('SL-0001', { x: 1, y: 2 })
+
+    let release: (() => void) | null = null
+    saveLayout.mockImplementationOnce(async (_p: string, positions: Record<string, Position>) => {
+      sent.push(positions)
+      await new Promise<void>((done) => (release = done))
+      return { saved: 1 }
+    })
+
+    const inFlight = store.flush()
+    store.remember('SL-0001', { x: 9, y: 9 })
+    release!()
+    await inFlight
+
+    const after = JSON.parse(localStorage.getItem('mnemonima.layout.p')!)
+    expect(after.pending).toEqual(['SL-0001'])
+    expect(after.positions['SL-0001']).toEqual([9, 9])
+
+    await store.flush()
+    expect(sent[1]).toEqual({ 'SL-0001': { x: 9, y: 9 } })
+  })
+
+  it('leaves everything pending when the daemon refuses', async () => {
+    const store = new LayoutStore('p')
+    store.remember('SL-0001', { x: 1, y: 2 })
+
+    saveLayout.mockRejectedValueOnce(new Error('daemon is not answering'))
+    const seen: unknown[] = []
+    store.onError((error) => seen.push(error))
+
+    await store.flush()
+
+    expect(seen).toHaveLength(1)
+    expect(JSON.parse(localStorage.getItem('mnemonima.layout.p')!).pending).toEqual(['SL-0001'])
   })
 })

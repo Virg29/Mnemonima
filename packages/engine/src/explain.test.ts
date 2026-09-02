@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { NotFoundError, TEST_MODEL_ID } from '@mnemonima/core'
+import { BadRequestError, NotFoundError, TEST_MODEL_ID } from '@mnemonima/core'
 import type { ProjectConfig } from '@mnemonima/core'
 import { addAlias, createProject, createSandbox, getConfig, setConfig } from '@mnemonima/store'
 import type { Db, Sandbox } from '@mnemonima/store'
@@ -134,6 +134,17 @@ describe('explaining a hit', () => {
     })
 
     for (const passage of result.passages) expect(passage.textScore).toBe(0)
+  })
+
+  it('refuses a mode that does not score passages', async () => {
+    // Weight resolution treats anything it does not recognise as hybrid, so
+    // these used to fall through and return a hybrid retrieval in a payload
+    // labelled with the mode that was asked for.
+    for (const mode of ['exact', 'id', 'graph'] as const) {
+      await expect(
+        explainNote(db, config, embedder, id, 'fragment shader', { mode }),
+      ).rejects.toThrow(BadRequestError)
+    }
   })
 
   it('refuses a note that does not exist, and says how to look', async () => {

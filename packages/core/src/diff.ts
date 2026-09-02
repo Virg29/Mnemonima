@@ -44,12 +44,23 @@ export interface Diff {
 }
 
 /**
- * Above this, the quadratic table is not worth building.
+ * Past this many lines a side, do not compare at all.
  *
- * 4000 lines a side is 16 million cells — well past any note, and the point at
- * which an honest refusal beats a page freezing.
+ * Well past any note, and the point at which an honest refusal beats a page
+ * freezing.
  */
 const MAX_LINES = 4000
+
+/**
+ * And past this many cells, do not build the table.
+ *
+ * The line cap alone bounds the wrong thing: it is the *product* that is
+ * allocated, so two bodies just under `MAX_LINES` that differ throughout ask
+ * for 4001 × 4001 `Int32`s — 64 MB, inside a daemon request handler, where a
+ * couple of concurrent diffs is the whole heap. One million cells is 4 MB and
+ * still covers a thousand changed lines against a thousand.
+ */
+const MAX_CELLS = 1_000_000
 
 function split(text: string): string[] {
   const normalised = text.replace(/\r\n/g, '\n')
@@ -165,28 +176,67 @@ export interface DiffOptions {
   readonly context?: number
 }
 
+function same(before: readonly string[], after: readonly string[]): boolean {
+  return before.length === after.length && before.every((line, index) => line === after[index])
+}
+
+/**
+ * Whether the table would be worth building.
+ *
+ * Measured on what is left after the common prefix and suffix are stripped,
+ * because that is what `walk` actually allocates: a thousand-line note with one
+ * edited paragraph is two rows by two, whatever its length.
+ */
+function tooLarge(before: readonly string[], after: readonly string[]): boolean {
+  if (before.length > MAX_LINES || after.length > MAX_LINES) return true
+
+  const [head, tail] = commonEnds(before, after)
+  const rows = before.length - head - tail + 1
+  const columns = after.length - head - tail + 1
+
+  return rows * columns > MAX_CELLS
+}
+
+/** How many lines the two share at the start, and then at the end. */
+function commonEnds(before: readonly string[], after: readonly string[]): [number, number] {
+  let head = 0
+  while (head < before.length && head < after.length && before[head] === after[head]) head += 1
+
+  let tail = 0
+  while (
+    tail < before.length - head &&
+    tail < after.length - head &&
+    before[before.length - 1 - tail] === after[after.length - 1 - tail]
+  ) {
+    tail += 1
+  }
+
+  return [head, tail]
+}
+
 export function diffText(before: string, after: string, options: DiffOptions = {}): Diff {
   const context = options.context ?? 3
-
-  if (before === after) {
-    return { hunks: [], added: 0, removed: 0, identical: true, truncated: false }
-  }
 
   const beforeLines = split(before)
   const afterLines = split(after)
 
-  if (beforeLines.length > MAX_LINES || afterLines.length > MAX_LINES) {
-    const lines: DiffLine[] = [
-      ...beforeLines.map(
-        (text, index): DiffLine => ({ op: 'remove', text, before: index + 1, after: null }),
-      ),
-      ...afterLines.map(
-        (text, index): DiffLine => ({ op: 'add', text, before: null, after: index + 1 }),
-      ),
-    ]
+  // Compared as lines rather than as raw text, because that is what this
+  // function means by the same: `split` normalises CRLF first, so a body
+  // exported to a file, edited on Windows and imported back is not a change.
+  // Comparing the strings said otherwise and produced an empty diff reported as
+  // a difference — `+0 -0`, and nothing under it.
+  if (same(beforeLines, afterLines)) {
+    return { hunks: [], added: 0, removed: 0, identical: true, truncated: false }
+  }
 
+  // Too large to compare, and it says so rather than pretending.
+  //
+  // No hunks at all: an earlier version returned a `DiffLine` for every line of
+  // both bodies, which made the guard against a frozen page produce twice the
+  // output of an ordinary diff. `truncated` is what a caller is meant to read.
+  if (tooLarge(beforeLines, afterLines)) {
     return {
-      hunks: toHunks(lines, context),
+      hunks: [],
       added: afterLines.length,
       removed: beforeLines.length,
       identical: false,
@@ -195,24 +245,9 @@ export function diffText(before: string, after: string, options: DiffOptions = {
   }
 
   // Common prefix and suffix first: an edit to one paragraph of a long note
-  // then leaves almost nothing for the quadratic part.
-  let head = 0
-  while (
-    head < beforeLines.length &&
-    head < afterLines.length &&
-    beforeLines[head] === afterLines[head]
-  ) {
-    head += 1
-  }
-
-  let tail = 0
-  while (
-    tail < beforeLines.length - head &&
-    tail < afterLines.length - head &&
-    beforeLines[beforeLines.length - 1 - tail] === afterLines[afterLines.length - 1 - tail]
-  ) {
-    tail += 1
-  }
+  // then leaves almost nothing for the quadratic part. The same measurement the
+  // size guard above made, so the two cannot disagree about what will be built.
+  const [head, tail] = commonEnds(beforeLines, afterLines)
 
   const middle = walk(
     beforeLines.slice(head, beforeLines.length - tail),

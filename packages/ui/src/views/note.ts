@@ -24,12 +24,24 @@ import { renderMarkdown } from '../markdown.js'
  * 7.2 exists to avoid.
  */
 export function noteScreen(): Screen {
+  // Which render is the current one.
+  //
+  // The toolbar is a single element the router clears and refills per screen,
+  // so anything appended to it from a callback has to check it is still the
+  // one that asked. The search explanation is fetched after the render returns,
+  // and without this a navigation during that request dropped its strip into
+  // the next screen's toolbar.
+  let generation = 0
+
   return {
     id: 'note',
     title: 'Notes',
     needsProject: true,
 
     async render(surface: Surface): Promise<void> {
+      const mine = ++generation
+      const current = (): boolean => mine === generation
+
       const { notes } = await api.notes(surface.project, 500)
       const id = surface.argument ?? notes[0]?.id ?? null
 
@@ -59,7 +71,7 @@ export function noteScreen(): Screen {
       }
 
       const note = await api.note(surface.project, id)
-      renderEditor(surface, note, notes)
+      renderEditor(surface, note, notes, current)
     },
   }
 }
@@ -68,6 +80,7 @@ function renderEditor(
   surface: Surface,
   note: NoteView,
   notes: { id: string; title: string }[],
+  current: () => boolean,
 ): void {
   const preview = el('div', { class: 'preview' })
   const status = el('span', { class: 'hint' })
@@ -146,11 +159,17 @@ function renderEditor(
   if (surface.query !== null) {
     void (async () => {
       try {
-        explanation = await api.explain(surface.project, note.id, surface.query!)
+        const found = await api.explain(surface.project, note.id, surface.query!)
+
+        // The screen may have changed while that was in flight, and the toolbar
+        // belongs to whatever is showing now.
+        if (!current()) return
+
+        explanation = found
         repaint(view.state.doc.toString())
         surface.bar.prepend(whyBar(surface, note, explanation))
       } catch (error) {
-        surface.fail(error)
+        if (current()) surface.fail(error)
       }
     })()
   }
@@ -375,19 +394,23 @@ function diffView(result: RevisionDiff, onClose: () => void): HTMLElement {
     ]),
   )
 
+  // `truncated` means nothing was compared, so there is nothing to draw and the
+  // page says why rather than showing an empty diff under a header.
+  if (result.diff.truncated) {
+    return el('div', { class: 'diff' }, [
+      header,
+      el('p', {
+        class: 'hint warn',
+        text:
+          `Too large to compare line by line — ${result.diff.removed} line(s) against ` +
+          `${result.diff.added}.`,
+      }),
+    ])
+  }
+
   return el('div', { class: 'diff' }, [
     header,
-    ...(result.diff.truncated
-      ? [
-          el('p', {
-            class: 'hint warn',
-            text: 'Too large to compare line by line; shown as a wholesale replacement.',
-          }),
-        ]
-      : []),
-    ...(hunks.length === 0 && !result.diff.identical
-      ? [el('p', { class: 'hint', text: 'No lines differ.' })]
-      : hunks),
+    ...(hunks.length === 0 ? [el('p', { class: 'hint', text: 'No lines differ.' })] : hunks),
   ])
 }
 

@@ -72,6 +72,14 @@ export function registerDiffCommand(program: Command): void {
             return
           }
 
+          if (result.diff.truncated) {
+            printNote(
+              `too large to compare line by line — ${result.diff.removed} line(s) against ` +
+                `${result.diff.added}. Read either side with \`mnemonima get ${id} --rev <n>\`.`,
+            )
+            return
+          }
+
           printSummary(result.diff)
           printLine()
           printLine(formatDiff(result.diff))
@@ -89,8 +97,5 @@ function describe(side: RevisionBody): string {
 }
 
 function printSummary(diff: Diff): void {
-  printNote(
-    `+${diff.added} -${diff.removed}` +
-      (diff.truncated ? ' — too large to compare line by line, shown as a replacement' : ''),
-  )
+  printNote(`+${diff.added} -${diff.removed}`)
 }

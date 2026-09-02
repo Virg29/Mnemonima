@@ -343,7 +343,7 @@ export function createServer(options: ServerOptions): {
   app.get('/projects/:name/notes/:id/explain', async (context) => {
     const project = pool.acquire(context.req.param('name'))
     const query = context.req.query('q') ?? ''
-    const mode = (context.req.query('mode') ?? project.config.search.mode) as SearchMode
+    const mode = searchMode(context.req.query('mode') ?? project.config.search.mode)
 
     const needsEmbedder = mode === 'hybrid' || mode === 'semantic'
     const resolved = needsEmbedder ? await pool.embedder(project) : null
@@ -629,20 +629,18 @@ export function createServer(options: ServerOptions): {
    */
   app.get('/projects/:name/notes/:id/revisions/:rev', (context) => {
     const project = pool.acquire(context.req.param('name'))
-    const rev = Number(context.req.param('rev'))
+    const rev = revisionNumber(context.req.param('rev'))
 
-    return context.json(
-      readRevision(project.handle.db, context.req.param('id'), Number.isFinite(rev) ? rev : 0),
-    )
+    return context.json(readRevision(project.handle.db, context.req.param('id'), rev))
   })
 
   app.get('/projects/:name/notes/:id/diff', (context) => {
     const project = pool.acquire(context.req.param('name'))
+    // Refused rather than ignored: silently dropping an unparseable bound would
+    // answer a question nobody asked.
     const number = (name: string): number | undefined => {
       const raw = context.req.query(name)
-      if (raw === undefined) return undefined
-      const parsed = Number(raw)
-      return Number.isFinite(parsed) ? parsed : undefined
+      return raw === undefined || raw === '' ? undefined : revisionNumber(raw)
     }
 
     return context.json(
@@ -704,6 +702,46 @@ async function readBody(context: {
 }): Promise<Record<string, unknown>> {
   const body = await context.req.json().catch(() => ({}))
   return body !== null && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+}
+
+const SEARCH_MODES: readonly SearchMode[] = ['hybrid', 'semantic', 'lexical', 'exact', 'id', 'graph']
+
+/**
+ * A mode from a query string, checked rather than cast.
+ *
+ * Casting an arbitrary string to `SearchMode` and handing it on meant an unknown
+ * value reached `resolveWeights`, which treats anything it does not recognise as
+ * hybrid — so a typo came back as a plausible answer under the name that was
+ * asked for.
+ */
+function searchMode(value: string): SearchMode {
+  if ((SEARCH_MODES as readonly string[]).includes(value)) return value as SearchMode
+
+  throw new BadRequestError(`unknown search mode "${value}"`, {
+    details: { mode: value, known: SEARCH_MODES },
+    hint: `use one of: ${SEARCH_MODES.join(', ')}`,
+  })
+}
+
+/**
+ * A revision number from a path segment.
+ *
+ * Not coerced: an unparseable segment used to become `NaN` and then `0`, which
+ * `readRevision` reads as "the note as it stands" — so `/revisions/latest`
+ * answered with today's body under a 200, which is the one thing a read of
+ * history must never do.
+ */
+function revisionNumber(value: string): number {
+  const parsed = Number(value)
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new BadRequestError(`"${value}" is not a revision number`, {
+      details: { rev: value },
+      hint: 'pass a revision from the revisions list, or 0 for the note as it stands',
+    })
+  }
+
+  return parsed
 }
 
 function isLocalOrigin(origin: string): boolean {

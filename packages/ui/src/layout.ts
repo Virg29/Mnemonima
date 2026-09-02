@@ -180,16 +180,27 @@ export class LayoutStore {
       if (at !== undefined) positions[id] = { x: at[0], y: at[1] }
     }
 
-    const sent = new Set(Object.keys(positions))
-
     try {
       await api.saveLayout(this.#project, positions, { keepalive })
 
-      // Re-read rather than reusing what was read above: a drag during the
-      // request has already been written, and clearing the whole list would
-      // drop it.
+      // Cleared by *position*, not by id.
+      //
+      // Re-reading and dropping every id that was sent loses a drag that landed
+      // during the request: the id was already pending, so it was removed as
+      // acknowledged while the newer position sat unsent, and the next flush
+      // found an empty list and did nothing. The note then reverted to the old
+      // place on the next load — the exact loss this store exists to prevent.
+      // An id stays pending unless what is stored is still what went out.
       const now = read(this.#project)
-      now.pending = now.pending.filter((id) => !sent.has(id))
+
+      now.pending = now.pending.filter((id) => {
+        const stayed = positions[id]
+        const current = now.positions[id]
+        if (stayed === undefined || current === undefined) return false
+
+        return current[0] !== stayed.x || current[1] !== stayed.y
+      })
+
       write(this.#project, now)
     } catch (error) {
       // Left pending on purpose, to go out with the next flush.

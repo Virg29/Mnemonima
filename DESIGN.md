@@ -1010,8 +1010,13 @@ The diff is line-based and written here rather than pulled in: the whole job is
 a longest common subsequence over a few hundred lines of markdown, and a
 dependency would be more surface than code. Common prefix and suffix are
 stripped first, which is what keeps the quadratic part cheap — an edit to one
-paragraph of a long note leaves almost nothing for it to chew on. Past 4000
-lines a side it says it could not compare rather than freezing.
+paragraph of a long note leaves almost nothing for it to chew on. It refuses to
+compare past 4000 lines a side **or** past a million table cells once those ends
+are stripped, and says so rather than trying: the line cap alone bounds the
+wrong thing, since it is the product that gets allocated, and two bodies just
+under it that differ throughout would ask for 64 MB inside a request handler.
+A refusal carries no hunks — an earlier one returned a line for every line of
+both bodies, so the guard against a frozen page produced twice an ordinary diff.
 
 The page shows the same thing on the note screen: the revision list is a card in
 the sidebar, and picking one puts the diff where the preview was. The editor and

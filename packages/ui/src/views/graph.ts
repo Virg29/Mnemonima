@@ -981,17 +981,26 @@ function syncEdges(panel: Panel, note: NoteView): void {
   const { graph } = panel
   if (!graph.hasNode(note.id)) return
 
-  const wanted = new Set(
-    note.links.filter((link) => link.resolved && graph.hasNode(link.dst)).map((link) => link.dst),
+  // Every link whose target is on screen, resolved or not.
+  //
+  // Filtering to resolved ones dropped the edges into phantom nodes: a note
+  // linking to an id nothing has kept the phantom but lost the dashed edge to
+  // it, so any unrelated edit quietly hid a dangling link — the case the graph
+  // draws phantoms in order to show.
+  const wanted = new Map(
+    note.links.filter((link) => graph.hasNode(link.dst)).map((link) => [link.dst, link.resolved]),
   )
 
   for (const edge of graph.outEdges(note.id)) {
     if (!wanted.has(graph.target(edge))) graph.dropEdge(edge)
   }
 
-  for (const target of wanted) {
+  for (const [target, resolved] of wanted) {
     if (graph.hasEdge(note.id, target)) continue
-    graph.addDirectedEdge(note.id, target, { size: 1, color: '#c7ccd4', resolved: true })
+
+    // The colour at rest is the reducer's, from the theme; only the two
+    // attributes it reads are set here.
+    graph.addDirectedEdge(note.id, target, { size: resolved ? 1 : 0.6, resolved })
   }
 }
 

@@ -74,10 +74,13 @@ describe('diffing two bodies', () => {
   })
 
   it('treats CRLF as the same text as LF', () => {
-    // A body exported to a file, edited on Windows and imported back should not
-    // read as every line changed.
-    expect(diffText('one\r\ntwo\r\n', 'one\ntwo\n').identical).toBe(false)
-    expect(diffText('one\r\ntwo\r\n', 'one\ntwo\n').hunks).toEqual([])
+    // A body exported to a file, edited on Windows and imported back is not a
+    // change. Comparing the raw strings said otherwise and produced an empty
+    // diff that still reported itself as a difference: `+0 -0`, nothing under it.
+    const diff = diffText('one\r\ntwo\r\n', 'one\ntwo\n')
+
+    expect(diff.identical).toBe(true)
+    expect(diff.hunks).toEqual([])
   })
 
   it('says so rather than freezing on a body too large to compare', () => {
@@ -87,6 +90,32 @@ describe('diffing two bodies', () => {
 
     expect(diff.truncated).toBe(true)
     expect(diff.identical).toBe(false)
+    // And no hunks. Returning a line for every line of both bodies made the
+    // guard against a frozen page produce twice an ordinary diff.
+    expect(diff.hunks).toEqual([])
+  })
+
+  it('refuses a comparison whose table would be enormous, not merely a long one', () => {
+    // The line cap bounds the wrong thing: it is the *product* that gets
+    // allocated. Two 1500-line bodies sharing nothing are 2.25 million cells,
+    // which a cap of 4000 lines a side waves straight through.
+    const left = Array.from({ length: 1500 }, (_, index) => `left ${index}`).join('\n')
+    const right = Array.from({ length: 1500 }, (_, index) => `right ${index}`).join('\n')
+
+    expect(diffText(left, right).truncated).toBe(true)
+  })
+
+  it('still compares a long body with one edited paragraph', () => {
+    // Because the guard measures what is left once the common ends are
+    // stripped, length alone is not what makes a comparison too large.
+    const long = Array.from({ length: 3000 }, (_, index) => `line ${index}`).join('\n')
+    const edited = long.replace('line 1500\n', 'line fifteen hundred\n')
+
+    const diff = diffText(long, edited)
+
+    expect(diff.truncated).toBe(false)
+    expect(diff.added).toBe(1)
+    expect(diff.removed).toBe(1)
   })
 
   it('writes the hunks the way `diff -u` does', () => {

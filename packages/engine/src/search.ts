@@ -708,7 +708,21 @@ export async function explainNote(
   }
 
   const mode = options.mode ?? (config.search.mode as SearchMode)
-  const weights = resolveWeights(mode === 'hybrid' ? 'hybrid' : mode, config, options.weights)
+
+  // Only the three modes that score passages can be explained.
+  //
+  // `resolveWeights` special-cases `semantic` and `lexical` and treats everything
+  // else as hybrid, so `exact`, `id` and `graph` used to fall through and produce
+  // a hybrid retrieval in a payload labelled with the mode that was asked for —
+  // an explanation of a search the engine never ran.
+  if (mode !== 'hybrid' && mode !== 'semantic' && mode !== 'lexical') {
+    throw new BadRequestError(`mode "${mode}" does not score passages, so there is nothing to explain`, {
+      details: { mode },
+      hint: 'use hybrid, semantic or lexical — exact, id and graph do not rank by passage',
+    })
+  }
+
+  const weights = resolveWeights(mode, config, options.weights)
 
   const space = requireActiveSpace(db)
   const index = options.index ?? (await buildSearchIndex(db, space))
