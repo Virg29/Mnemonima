@@ -45,9 +45,16 @@ export interface Surface {
   /** Re-render this screen from scratch. */
   reload(): void
   /** Switch screens, optionally carrying an argument (a note id, say). */
-  go(screen: string, argument?: string): void
-  /** The argument `go` was called with, if any. */
+  go(screen: string, argument?: string, query?: string): void
+  /** The argument  was called with, if any. */
   readonly argument: string | null
+  /**
+   * The search a screen was opened from, when it was.
+   *
+   * Carried in the hash rather than held in a variable, so the link a reader
+   * copies still explains itself when it is opened again.
+   */
+  readonly query: string | null
   /** Show a failure without losing what is already on screen. */
   fail(error: unknown): void
 }
@@ -64,6 +71,7 @@ export class App {
   #project = ''
   #current = ''
   #argument: string | null = null
+  #query: string | null = null
 
   constructor(root: HTMLElement) {
     this.#root = root
@@ -155,21 +163,27 @@ export class App {
   }
 
   #fromHash(): void {
-    const [id = '', argument = ''] = location.hash.replace(/^#/, '').split('/')
+    const [id = '', argument = '', query = ''] = location.hash.replace(/^#/, '').split('/')
     const first = [...this.#screens.keys()][0] ?? ''
 
     this.#argument = argument === '' ? null : decodeURIComponent(argument)
+    this.#query = query === '' ? null : decodeURIComponent(query)
     void this.#render(this.#screens.has(id) ? id : first)
   }
 
-  go(screen: string, argument?: string): void {
-    const next = argument === undefined ? `#${screen}` : `#${screen}/${encodeURIComponent(argument)}`
+  go(screen: string, argument?: string, query?: string): void {
+    const next =
+      argument === undefined
+        ? `#${screen}`
+        : `#${screen}/${encodeURIComponent(argument)}` +
+          (query === undefined || query === '' ? '' : `/${encodeURIComponent(query)}`)
 
     // Setting the hash fires `hashchange`, which renders. When it is already
     // the current hash no event fires, so the render has to happen here — that
     // is what makes a "reload" button work.
     if (location.hash === next) {
       this.#argument = argument ?? null
+      this.#query = query ?? null
       void this.#render(screen)
       return
     }
@@ -220,8 +234,9 @@ export class App {
       body: this.#body,
       project: this.#project,
       argument: this.#argument,
-      reload: () => app.go(id, app.#argument ?? undefined),
-      go: (screen, argument) => app.go(screen, argument),
+      query: this.#query,
+      reload: () => app.go(id, app.#argument ?? undefined, app.#query ?? undefined),
+      go: (screen, argument, query) => app.go(screen, argument, query),
       fail: (error) => {
         app.#body.prepend(failure(error))
       },

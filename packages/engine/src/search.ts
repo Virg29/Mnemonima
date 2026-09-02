@@ -1,12 +1,13 @@
 import { assertEnglish, BadRequestError, NotFoundError } from '@mnemonima/core'
 import type { GateFinding, ProjectConfig } from '@mnemonima/core'
-import { getNote, listNotes, requireActiveSpace } from '@mnemonima/store'
+import { getNote, listAliases, listNotes, noteTerms, requireActiveSpace } from '@mnemonima/store'
 import type { Db, NeighbourSets } from '@mnemonima/store'
 import type { ResolvedEmbedder } from './embedder.js'
 import { computeGraphAdjustment, loadGraph, neighboursOf, traverse } from './graph.js'
 import type { GraphNeighbour } from './graph.js'
 import {
   buildSearchIndex,
+  lexicalQuery,
   normaliseScores,
   searchChunksLexical,
   searchChunksVector,
@@ -623,4 +624,184 @@ function assertSpaceMatchesModel(spaceModel: string, requested: string): void {
 
 function round(value: number): number {
   return Math.round(value * 1e6) / 1e6
+}
+
+// ---- explaining one hit ---------------------------------------------------
+
+export interface MatchedPassage {
+  readonly chunkId: number
+  readonly strategy: string
+  readonly headingPath: string | null
+  readonly kind: string
+  readonly text: string
+  /** BM25, normalised across this query's candidate set. */
+  readonly textScore: number
+  /** Cosine, already comparable and left alone. */
+  readonly vectorScore: number
+  /** The two, under the query's weights. */
+  readonly combined: number
+  /**
+   * Whether this passage is one of the ones that produced the note's score.
+   *
+   * Fusion takes the **best chunk per strategy** and nothing else (DESIGN.md
+   * 8.4); every other matching chunk reaches the score only through the
+   * multi-chunk term, which counts them without reading them. Marking all of
+   * them would be marking the whole note: a cosine against `gte-small` sits
+   * around 0.7 for unrelated text, so almost every passage of a long note
+   * "matches" and the scores come back nearly flat. These two are the answer
+   * to "what made this note rank", and the rest is a count.
+   */
+  readonly scoring: boolean
+}
+
+export interface MatchedField {
+  readonly field: 'title' | 'alias' | 'term'
+  readonly value: string
+  readonly words: readonly string[]
+}
+
+export interface NoteExplanation {
+  readonly noteId: string
+  readonly query: string
+  readonly mode: SearchMode
+  readonly weights: SearchWeights
+  /**
+   * The query words that actually reached BM25.
+   *
+   * Stop words are stripped before the lexical pass (see `lexicalQuery`), so
+   * showing the raw query would underline words that scored nothing.
+   */
+  readonly words: readonly string[]
+  /** Title, aliases and terms of this note that one of those words hit. */
+  readonly fields: readonly MatchedField[]
+  readonly passages: readonly MatchedPassage[]
+}
+
+/**
+ * Why this note came back for this query — DESIGN.md 8.4.
+ *
+ * The same two passes a search runs, kept for one note and not cut down to the
+ * two snippets a result list shows. The page needs every passage that matched
+ * in order to mark them in the body.
+ *
+ * **The vector half cannot be attributed to a word.** A cosine between the
+ * query and a passage does not decompose, and a note can rank first without
+ * sharing a single word with the query — that is what the vector half is for.
+ * So `words` is what the *lexical* pass looked for, and nothing here claims it
+ * is what made the note win. The passage scores say which half did.
+ */
+export async function explainNote(
+  db: Db,
+  config: ProjectConfig,
+  resolved: ResolvedEmbedder | null,
+  noteId: string,
+  query: string,
+  options: SearchOptions = {},
+): Promise<NoteExplanation> {
+  const note = getNote(db, noteId)
+
+  if (note === null) {
+    throw new NotFoundError(`no note ${noteId} in this project`, {
+      details: { id: noteId },
+      hint: 'run `mnemonima list` to see the ids that exist',
+    })
+  }
+
+  const mode = options.mode ?? (config.search.mode as SearchMode)
+  const weights = resolveWeights(mode === 'hybrid' ? 'hybrid' : mode, config, options.weights)
+
+  const space = requireActiveSpace(db)
+  const index = options.index ?? (await buildSearchIndex(db, space))
+
+  const scored = await retrieveChunks(
+    index,
+    weights.vector > 0 ? resolved : null,
+    query,
+    // A model the caller did not load means the lexical half only, rather than
+    // a refusal: an explanation of half the score beats no explanation.
+    weights.vector > 0 && resolved === null ? { text: weights.text, vector: 0 } : weights,
+    options.candidateK ?? config.search.limits.candidateK,
+    options.minSimilarity ?? config.search.limits.minSimilarity,
+    config.search.tolerance,
+  )
+
+  const mine = scored
+    .filter((chunk) => chunk.document.noteId === noteId)
+    .sort((a, b) => b.combined - a.combined)
+
+  // The best of each strategy, which is exactly what fusion reads. `mine` is
+  // sorted by score, so the first of each strategy is that strategy's best.
+  const best = new Set<number>()
+  const covered = new Set<string>()
+
+  for (const chunk of mine) {
+    if (covered.has(chunk.document.strategy)) continue
+    covered.add(chunk.document.strategy)
+    best.add(chunk.document.chunkId)
+  }
+
+  const passages = mine.map(
+    (chunk): MatchedPassage => ({
+      chunkId: chunk.document.chunkId,
+      strategy: chunk.document.strategy,
+      headingPath: chunk.document.headingPath,
+      kind: chunk.document.kind,
+      text: chunk.document.text,
+      textScore: chunk.text,
+      vectorScore: chunk.vector,
+      combined: chunk.combined,
+      scoring: best.has(chunk.document.chunkId),
+    }),
+  )
+
+  const words = lexicalQuery(query)
+    .split(/\s+/)
+    .map((word) => word.replace(/[^A-Za-z0-9_+#.-]/g, '').toLowerCase())
+    .filter((word) => word !== '')
+
+  return {
+    noteId,
+    query,
+    mode,
+    weights,
+    words: [...new Set(words)],
+    fields: matchedFields(db, noteId, note.title, words),
+    passages,
+  }
+}
+
+/**
+ * Which of the note's own names and terms the query words hit.
+ *
+ * This is the `why.meta` half, and unlike the vector half it *is* word level and
+ * exact: metadata is short strings, and either a query word is in one or it is
+ * not.
+ */
+function matchedFields(
+  db: Db,
+  noteId: string,
+  title: string,
+  words: readonly string[],
+): MatchedField[] {
+  const found: MatchedField[] = []
+
+  const hits = (value: string): string[] => {
+    const haystack = value.toLowerCase()
+    return words.filter((word) => haystack.includes(word))
+  }
+
+  const titleWords = hits(title)
+  if (titleWords.length > 0) found.push({ field: 'title', value: title, words: titleWords })
+
+  for (const alias of listAliases(db, noteId)) {
+    const matched = hits(alias.alias)
+    if (matched.length > 0) found.push({ field: 'alias', value: alias.alias, words: matched })
+  }
+
+  for (const term of noteTerms(db, noteId)) {
+    const matched = hits(term.term)
+    if (matched.length > 0) found.push({ field: 'term', value: term.term, words: matched })
+  }
+
+  return found
 }

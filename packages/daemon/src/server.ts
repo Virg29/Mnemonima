@@ -15,7 +15,14 @@ import {
   requireNote,
   saveLayout,
 } from '@mnemonima/store'
-import { diffRevisions, loadGraph, neighboursOf, readRevision, searchNotes } from '@mnemonima/engine'
+import {
+  diffRevisions,
+  explainNote,
+  loadGraph,
+  neighboursOf,
+  readRevision,
+  searchNotes,
+} from '@mnemonima/engine'
 import type { SearchMode } from '@mnemonima/engine'
 import {
   activateSpace,
@@ -324,6 +331,29 @@ export function createServer(options: ServerOptions): {
     })
 
     return context.json({ project: project.name, ...result })
+  })
+
+  /**
+   * Why one note came back for one query.
+   *
+   * Its own route rather than more fields on the search response: a result
+   * list shows two snippets per note, and marking a body needs every passage
+   * that matched. Asked for once, when a note is opened from a search.
+   */
+  app.get('/projects/:name/notes/:id/explain', async (context) => {
+    const project = pool.acquire(context.req.param('name'))
+    const query = context.req.query('q') ?? ''
+    const mode = (context.req.query('mode') ?? project.config.search.mode) as SearchMode
+
+    const needsEmbedder = mode === 'hybrid' || mode === 'semantic'
+    const resolved = needsEmbedder ? await pool.embedder(project) : null
+
+    return context.json(
+      await explainNote(project.handle.db, project.config, resolved, context.req.param('id'), query, {
+        mode,
+        index: await pool.index(project),
+      }),
+    )
   })
 
   app.get('/projects/:name/notes', (context) => {

@@ -217,7 +217,7 @@ function paint(
     return
   }
 
-  for (const hit of result.hits) results.append(hitCard(surface, hit))
+  for (const hit of result.hits) results.append(hitCard(surface, hit, result.query))
 }
 
 /** The five parts of `why`, drawn in the proportion they contribute. */
@@ -229,7 +229,11 @@ const PARTS: { key: keyof Hit['why']; label: string; colour: string }[] = [
   { key: 'multiChunk', label: 'multi-chunk', colour: 'var(--muted)' },
 ]
 
-function hitCard(surface: Surface, hit: Hit): HTMLElement {
+/**
+ * @param query carried into the note screen, so opening a hit can show what the
+ *   search matched inside it rather than the note alone.
+ */
+function hitCard(surface: Surface, hit: Hit, query: string): HTMLElement {
   const total = PARTS.reduce((sum, part) => sum + Math.max(0, Number(hit.why[part.key])), 0)
 
   const bar = el(
@@ -257,11 +261,12 @@ function hitCard(surface: Surface, hit: Hit): HTMLElement {
   return el('div', { class: 'card' }, [
     el('div', { class: 'bar', style: 'padding:0;border:0' }, [
       el('a', {
-        href: `#note/${encodeURIComponent(hit.id)}`,
+        href: `#note/${encodeURIComponent(hit.id)}/${encodeURIComponent(query)}`,
+        title: 'Open the note with what this search matched marked in it',
         text: hit.title,
         onclick: (event: Event) => {
           event.preventDefault()
-          surface.go('note', hit.id)
+          surface.go('note', hit.id, query)
         },
       }),
       el('span', { class: 'id', text: hit.id }),

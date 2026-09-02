@@ -223,6 +223,35 @@ export interface DoctorView {
   activeSpace: string | null
 }
 
+export interface MatchedPassage {
+  chunkId: number
+  strategy: string
+  headingPath: string | null
+  kind: string
+  text: string
+  textScore: number
+  vectorScore: number
+  combined: number
+  /** One of the two chunks fusion actually read; the rest only added to a count. */
+  scoring: boolean
+}
+
+export interface MatchedField {
+  field: 'title' | 'alias' | 'term'
+  value: string
+  words: string[]
+}
+
+export interface NoteExplanation {
+  noteId: string
+  query: string
+  mode: string
+  weights: { text: number; vector: number }
+  words: string[]
+  fields: MatchedField[]
+  passages: MatchedPassage[]
+}
+
 export interface RevisionBody {
   noteId: string
   /** null for the note as it stands. */
@@ -446,6 +475,12 @@ export const api = {
 
   revisions: (project: string, id: string): Promise<{ revisions: RevisionRow[] }> =>
     call('GET', `/projects/${encode(project)}/notes/${encode(id)}/revisions`),
+
+  explain: (project: string, id: string, query: string): Promise<NoteExplanation> =>
+    call(
+      'GET',
+      `/projects/${encode(project)}/notes/${encode(id)}/explain?q=${encodeURIComponent(query)}`,
+    ),
 
   revision: (project: string, id: string, rev: number): Promise<RevisionBody> =>
     call('GET', `/projects/${encode(project)}/notes/${encode(id)}/revisions/${rev}`),

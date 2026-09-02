@@ -930,3 +930,54 @@ a:hover {
 .diff-line.remove .sign {
   color: var(--bad);
 }
+
+/* ---- what a search matched --------------------------------------------- */
+
+.why-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/*
+ * A marked block keeps its own shape and gains a rule above it. Tinting the
+ * background would fight the code blocks and tables that are already tinted.
+ */
+.preview .matched {
+  position: relative;
+  padding: 6px 8px 2px;
+  margin: 0 -8px 4px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+/*
+ * Red is the words, blue is the meaning, and the split is their ratio — the
+ * shape of the match rather than its size. A passage that came back purely on
+ * the vector half is all blue, which is exactly the case worth seeing: the note
+ * answered without sharing a word.
+ */
+.match-bar {
+  display: flex;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  background: var(--border);
+}
+
+.match-bar .lexical {
+  background: #e03131;
+}
+
+.match-bar .vector {
+  background: #2f6feb;
+}
+
+.preview mark.word {
+  background: none;
+  color: inherit;
+  border-bottom: 2px solid #e03131;
+  padding-bottom: 1px;
+}

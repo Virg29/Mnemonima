@@ -785,6 +785,45 @@ difference from "yet another local RAG".
 Presets `precise` / `balanced` / `recall` / `agent` — so that nobody has to turn
 20 knobs.
 
+
+### 8.6 Showing what matched
+
+A hit says *that* a note answered; opening it should say **where**. From the
+search lab a hit carries its query into the note screen — `#note/<id>/<query>`,
+in the hash, so a copied link still explains itself — and the note is marked
+with what the search found in it.
+
+`GET /notes/:id/explain?q=` is a route of its own rather than more fields on the
+search response, because a result list shows two snippets per note and marking a
+body needs every passage that matched.
+
+**Only the passages that scored are marked**, and that is a consequence of the
+fusion rule, not a threshold. §8.4 takes the *best chunk per strategy* and
+nothing else; every other matching chunk reaches the score through the
+multi-chunk term, which counts them without reading them. The difference is not
+cosmetic: measured on a 200-line note, one query matched **43 passages** with
+scores from 0.92 down to 0.61 — because a cosine against `gte-small` sits around
+0.7 for unrelated text, so nearly every passage of a long note "matches". Two of
+those forty-three produced the score. Marking all of them would light the whole
+note and say nothing; the strip above the note says how many merely counted.
+
+Above each marked block is a two-colour bar: **red for the words, blue for the
+meaning**, split by their ratio. It shows the *shape* of the match rather than
+its size, which is the question a reader scanning a note has — did this passage
+come back because of the words, or because of the meaning? A passage retrieved
+purely by the vector half is all blue, and that is the case most worth seeing.
+
+**Words are underlined, never claimed as the cause.** The lexical half is word
+level and can be pointed at: the query words that reach BM25 are known, stop
+words having been dropped first (§8.2), so their occurrences inside a marked
+block are underlined. The vector half cannot be attributed to a word at all — a
+cosine does not decompose, and a note can rank first without sharing one — so
+nothing here says these words are why it won. The bar says which half did.
+
+The `why.meta` component is word level too, and exact: which of the note's own
+title, aliases and terms a query word hit is set intersection. It is shown as
+text in the strip rather than as a mark in the body, because that is where it
+came from.
 ### 8.6 Explainability
 
 Every hit carries a breakdown of its score: the contribution of `text`, `vector`,

@@ -224,9 +224,114 @@ function blocks(tokens: readonly Token[]): string {
     .join('\n')
 }
 
-export function renderMarkdown(source: string): string {
+
+/** A passage a search matched, and the two halves that made it match. */
+export interface MatchedPassage {
+  readonly text: string
+  readonly textScore: number
+  readonly vectorScore: number
+}
+
+export interface RenderOptions {
+  /**
+   * Passages the search matched. A block whose text falls inside one of them is
+   * marked, with a bar showing which half of the score it was.
+   */
+  readonly matched?: readonly MatchedPassage[]
+  /**
+   * Query words to underline inside marked blocks — the words that reached
+   * BM25, after stop words were dropped.
+   *
+   * Underlined, never claimed as the reason: the vector half of a score cannot
+   * be attributed to a word at all, and a passage can match on meaning without
+   * sharing one.
+   */
+  readonly words?: readonly string[]
+}
+
+export function renderMarkdown(source: string, options: RenderOptions = {}): string {
   // `gfm` is what brings tables, strikethrough and task lists. `breaks` is off
   // because a note body is wrapped prose, and a hard break per line would
   // double the height of every paragraph.
-  return blocks(new Lexer({ gfm: true, breaks: false }).lex(source))
+  const tokens = new Lexer({ gfm: true, breaks: false }).lex(source)
+
+  const matched = options.matched ?? []
+  const words = (options.words ?? []).filter((word) => word.length > 1)
+
+  if (matched.length === 0) return blocks(tokens)
+
+  // Membership by containment rather than by offset. A chunk's text is its
+  // blocks joined with a blank line, and each block is a verbatim slice of the
+  // body — so a block either sits inside a matched chunk or it does not, and
+  // no character arithmetic is needed to tell which.
+  const haystacks = matched.map((passage) => ({
+    passage,
+    text: normalise(passage.text),
+  }))
+
+  return tokens
+    .map((token) => {
+      const html = block(token)
+      if (html === '') return ''
+
+      const own = normalise(token.raw)
+      if (own === '') return html
+
+      const hit = haystacks.find((candidate) => candidate.text.includes(own))
+      if (hit === undefined) return html
+
+      return (
+        `<div class="matched">${bar(hit.passage)}` +
+        `${words.length === 0 ? html : markWords(html, words)}</div>`
+      )
+    })
+    .filter((html) => html !== '')
+    .join('\n')
+}
+
+/** Whitespace-insensitive, because the join and the trim are not meaning. */
+function normalise(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * The two halves of a passage's score, as one bar.
+ *
+ * Red is the lexical half and blue the vector half, and the split is their
+ * ratio — the shape of the match rather than its size, which is what a reader
+ * scanning a note wants: did this passage come back because of the words, or
+ * because of the meaning?
+ */
+function bar(passage: MatchedPassage): string {
+  const total = passage.textScore + passage.vectorScore
+  const share = total === 0 ? 50 : Math.round((passage.textScore / total) * 100)
+
+  const title =
+    `words ${passage.textScore.toFixed(2)} · meaning ${passage.vectorScore.toFixed(2)}`
+
+  return (
+    `<div class="match-bar" title="${escape(title)}">` +
+    `<span class="lexical" style="width:${share}%"></span>` +
+    `<span class="vector" style="width:${100 - share}%"></span>` +
+    '</div>'
+  )
+}
+
+/**
+ * Underlines the query words in already-rendered markup.
+ *
+ * Splitting on tags is sound *for our own output* and would not be in general:
+ * everything here was escaped on the way in, so a `<` inside text is `&lt;` and
+ * the only real angle brackets are the ones this file wrote.
+ */
+function markWords(html: string, words: readonly string[]): string {
+  const escaped = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const pattern = new RegExp(`\\b(?:${escaped.join('|')})`, 'gi')
+
+  return html
+    .split(/(<[^>]*>)/)
+    .map((part, index) =>
+      index % 2 === 1 ? part : part.replace(pattern, '<mark class="word">$&</mark>'),
+    )
+    .join('')
 }

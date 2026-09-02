@@ -1,5 +1,5 @@
 import { api } from '../api.js'
-import type { NoteView, RevisionDiff } from '../api.js'
+import type { NoteExplanation, NoteView, RevisionDiff } from '../api.js'
 import type { Screen, Surface } from '../app.js'
 import { clear, el, when } from '../dom.js'
 import { markdownEditor } from '../editor.js'
@@ -71,10 +71,19 @@ function renderEditor(
   const preview = el('div', { class: 'preview' })
   const status = el('span', { class: 'hint' })
 
+  // What the search that led here matched, once it has been asked for. Held
+  // beside the repaint so an edit re-renders with the marks still on.
+  let explanation: NoteExplanation | null = null
+
   const repaint = (body: string): void => {
     // The only place this page produces markup, and every character of the
     // note went through an escape on the way (see markdown.ts).
-    preview.innerHTML = renderMarkdown(body)
+    preview.innerHTML = renderMarkdown(body, {
+      // Only the passages fusion read. Every other matching chunk reached the
+      // score through a count, and marking those would mark the whole note.
+      matched: explanation?.passages.filter((passage) => passage.scoring),
+      words: explanation?.words,
+    })
   }
 
   const view = markdownEditor({
@@ -136,6 +145,19 @@ function renderEditor(
   // The preview lives inside a pane the history card can take over, so a diff
   // replaces the rendered note without disturbing the editor or its unsaved text.
   const pane = el('div', { class: 'pane' }, [preview])
+
+  // Arrived from a search: ask what it matched, and mark the body with it.
+  if (surface.query !== null) {
+    void (async () => {
+      try {
+        explanation = await api.explain(surface.project, note.id, surface.query!)
+        repaint(view.state.doc.toString())
+        surface.bar.prepend(whyBar(surface, note, explanation))
+      } catch (error) {
+        surface.fail(error)
+      }
+    })()
+  }
 
   surface.body.append(
     el('div', { class: 'split editor' }, [
@@ -371,4 +393,52 @@ function diffView(result: RevisionDiff, onClose: () => void): HTMLElement {
       ? [el('p', { class: 'hint', text: 'No lines differ.' })]
       : hunks),
   ])
+}
+
+/**
+ * The strip above the note when it was opened from a search.
+ *
+ * Says what was asked, how many passages answered, and what the query hit in
+ * the note's own names and terms — the `why.meta` half, which unlike the vector
+ * half *is* word level and exact.
+ */
+function whyBar(surface: Surface, note: NoteView, explanation: NoteExplanation): HTMLElement {
+  const fields = explanation.fields.map(
+    (field) => `${field.field}: ${field.value}`,
+  )
+
+  return el('span', { class: 'why-bar' }, [
+    el('span', { class: 'hint', text: 'matched' }),
+    el('code', { text: explanation.query }),
+    el('span', {
+      class: 'hint',
+      text: describeMatch(explanation),
+    }),
+    ...(fields.length === 0 ? [] : [el('span', { class: 'hint', text: `· ${fields.join(', ')}` })]),
+    el('button', {
+      text: 'Clear',
+      title: 'Show the note without the search marks',
+      onclick: () => surface.go('note', note.id),
+    }),
+  ])
+}
+
+/**
+ * How many passages made the score, and how many merely matched.
+ *
+ * The distinction is the fusion rule: the best chunk of each strategy is read,
+ * and everything else contributes only through the multi-chunk term. Saying "43
+ * passages" when two of them were read would be true and misleading.
+ */
+function describeMatch(explanation: NoteExplanation): string {
+  const scoring = explanation.passages.filter((passage) => passage.scoring).length
+  const rest = explanation.passages.length - scoring
+
+  if (scoring === 0) {
+    return 'no passage scored — this note came back on its title, aliases or terms'
+  }
+
+  return rest === 0
+    ? `${scoring} passage(s) scored`
+    : `${scoring} passage(s) scored · ${rest} more matched, and only counted`
 }
