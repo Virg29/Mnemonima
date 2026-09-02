@@ -2,11 +2,12 @@
   "name": "mnemonima-workspace",
   "version": "0.2.0",
   "private": true,
+  "packageManager": "pnpm@10.13.1",
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "pnpm -r --filter \"./packages/*\" run build",
-    "typecheck": "tsc -b --pretty false || tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "cli": "node packages/cli/dist/index.js"

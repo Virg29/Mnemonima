@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+# Nothing is published to a registry: every package is `private: true` until the
+# public API has settled (DESIGN.md 1.2, A14). What a release does here is mark
+# a commit and carry that version's section of the changelog, so the tag says
+# what is in it without anyone reading a diff.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # A tag is not a promise until it has been built and tested from a clean
+      # checkout, so this repeats CI rather than trusting that it ran.
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test
+
+      - name: Check the tag against the version in the manifest
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p 'require("./package.json").version')"
+
+          if [ "$tag" != "$manifest" ]; then
+            echo "tag v$tag does not match package.json $manifest" >&2
+            echo "hint: bump the manifest and re-tag, or tag v$manifest" >&2
+            exit 1
+          fi
+
+      - name: Take this version's section out of the changelog
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+
+          # Matched as a string prefix rather than a regular expression: the
+          # heading carries brackets, and escaping them through a shell into an
+          # awk program is a step that silently stops matching.
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+
+          if [ ! -s notes.md ]; then
+            echo "no section for $version in CHANGELOG.md" >&2
+            echo "hint: add a '## [$version]' heading before tagging" >&2
+            exit 1
+          fi
+
+          echo "release notes:"
+          head -3 notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md

@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to a branch cancels the run still going for the first one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Both platforms on purpose. This project has code that only runs on one of
+    # them — `pathToFileURL` for the ESM loader, which refuses a bare `W:\...`,
+    # and database tests that close a connection and delete the file, which
+    # Windows keeps a handle on for a moment. A green Linux run says nothing
+    # about either.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      # The floor the manifest declares, so a release cannot depend on something
+      # newer than it says it does.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      # Builds every package, and the UI's own build typechecks it against the
+      # DOM lib — the root config excludes it, because it is browser code.
+      - run: pnpm build
+
+      - run: pnpm test
