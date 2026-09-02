@@ -45,18 +45,42 @@ const PALETTE = [
   '#5c7cfa',
 ]
 
-const DIMMED_NODE = '#dfe3e8'
-const DIMMED_EDGE = '#eceef1'
 const ACTIVE_EDGE = '#2f6feb'
+
+/**
+ * What "dimmed" and "readable" mean, which depends on the ground.
+ *
+ * These were fixed light values, and on the dark theme that inverted the whole
+ * screen: a note the query did not match was painted near-white and so came out
+ * *brighter* than every hit, the unmatched edges drew a bright web over the
+ * heat map, and the labels were black on near-black. The one thing a search is
+ * supposed to make quiet was the loudest thing on the page.
+ */
+interface Ground {
+  readonly dimNode: string
+  readonly dimEdge: string
+  readonly label: string
+}
+
+const LIGHT: Ground = { dimNode: '#dfe3e8', dimEdge: '#eceef1', label: '#14171c' }
+const DARK: Ground = { dimNode: '#2a3038', dimEdge: '#242a32', label: '#c9d0d9' }
+
+function currentGround(): Ground {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? DARK : LIGHT
+}
 
 /**
  * The ramp a search paints its hits with, as `[position, r, g, b]`.
  *
  * Black-body order: indigo for the weakest match, red through the middle,
- * yellow at the hot end. The stops are **not** evenly spaced — red sits at
- * 0.64 — which is what keeps the top of the range readable: an even three-stop
- * ramp spends half its length getting out of the blues, and the difference
- * between a good answer and the best one is the part worth seeing.
+ * amber at the hot end. The stops are **not** evenly spaced — red sits at 0.57
+ * — which is what keeps the top of the range readable: an even three-stop ramp
+ * spends half its length getting out of the blues, and the difference between a
+ * good answer and the best one is the part worth seeing.
+ *
+ * It stops short of yellow because the page is white as often as it is dark,
+ * and a yellow disc on white is a disc nobody can find — the hottest note was
+ * the hardest one to see, which is the exact inverse of the point.
  *
  * RGB triples rather than a CSS colour string because sigma's parser reads hex,
  * `rgb()` and the named HTML colours and nothing else — an `hsl()` string does
@@ -64,8 +88,8 @@ const ACTIVE_EDGE = '#2f6feb'
  */
 const HEAT: readonly (readonly [number, number, number, number])[] = [
   [0, 70, 58, 180],
-  [0.64, 253, 29, 29],
-  [1, 253, 253, 29],
+  [0.57, 237, 0, 0],
+  [1, 253, 175, 29],
 ]
 
 /** A point on that ramp, `0` cold and `1` hot. */
@@ -409,6 +433,19 @@ function hash(id: string): number {
  * same fact.
  */
 function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
+  let ground = currentGround()
+
+  const paint = (): void => {
+    renderer.setSetting('labelColor', { color: ground.label })
+    renderer.refresh()
+  }
+
+  // The operator can change the system theme with the page open, and the
+  // canvas is the one part of it CSS cannot restyle on its own.
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    ground = currentGround()
+    paint()
+  })
   renderer.setSetting('nodeReducer', (node, data) => {
     // A hit is repainted rather than merely enlarged. The Louvain colour says
     // which cluster a note belongs to, which is the wrong question while a
@@ -439,13 +476,13 @@ function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
         return { ...base, zIndex: 2, size: size * 1.4, forceLabel: true }
       }
       if (emphasis.near.has(node)) return { ...base, zIndex: 1, forceLabel: true }
-      return { ...data, color: DIMMED_NODE, label: '', zIndex: 0 }
+      return { ...data, color: ground.dimNode, label: '', zIndex: 0 }
     }
 
     if (emphasis.hits === null) return data
     if (hit !== undefined) return { ...base, zIndex: 1, forceLabel: hit > 0.75 }
 
-    return { ...data, color: DIMMED_NODE, label: '', zIndex: 0 }
+    return { ...data, color: ground.dimNode, label: '', zIndex: 0 }
   })
 
   renderer.setSetting('edgeReducer', (edge, data) => {
@@ -455,7 +492,7 @@ function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
 
       return touches
         ? { ...data, color: ACTIVE_EDGE, size: Number(data['size'] ?? 1) * 2.4, zIndex: 1 }
-        : { ...data, color: DIMMED_EDGE, zIndex: 0 }
+        : { ...data, color: ground.dimEdge, zIndex: 0 }
     }
 
     if (emphasis.hits === null) return data
@@ -463,7 +500,7 @@ function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
     // A search dims the edges too, or the highlighted notes sit in a web that
     // is just as loud as they are.
     const both = emphasis.hits.has(graph.source(edge)) && emphasis.hits.has(graph.target(edge))
-    return both ? data : { ...data, color: DIMMED_EDGE, zIndex: 0 }
+    return both ? data : { ...data, color: ground.dimEdge, zIndex: 0 }
   })
 
   renderer.on('enterNode', ({ node }) => {
@@ -477,6 +514,8 @@ function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
     emphasis.near = new Set()
     renderer.refresh()
   })
+
+  paint()
 }
 
 function shiftHeld(original: MouseEvent | TouchEvent): boolean {

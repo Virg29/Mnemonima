@@ -1089,14 +1089,25 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
 
    **A search paints its results as a heat map.** Everything it did not match
    goes flat grey, and every hit is repainted along a black-body ramp — indigo
-   for the weakest match, red through the middle, yellow at the hot end — and
+   for the weakest match, red through the middle, amber at the hot end — and
    sized to match, so the best answers are what the eye lands on. The cluster
    colour answers which group a note belongs to, which is the wrong question
    while a query is on screen.
 
-   The stops are not evenly spaced: red sits at 0.64 of the way up. An even
+   The stops are not evenly spaced: red sits at 0.57 of the way up. An even
    three-stop ramp spends half its length getting out of the blues, and the
    difference between a good answer and the best one is the part worth seeing.
+   It stops short of yellow because the page is white as often as it is dark,
+   and a yellow disc on white is a disc nobody can find — the hottest note
+   would be the hardest one to see, which is the inverse of the point.
+
+   What counts as **dimmed** follows the theme, and so does the label colour.
+   Both were fixed light values, which inverted the whole screen on the dark
+   theme: an unmatched note was painted near-white and came out brighter than
+   every hit, the unmatched edges drew a bright web over the heat map, and the
+   labels were black on near-black. The canvas is the one part of this page CSS
+   cannot restyle on its own, so the graph reads `prefers-color-scheme` itself
+   and repaints when it changes.
 
    The ramp is stretched across the returned set: the top hit is always at the
    hot end, the weakest returned always at the cold one. Keyed to the **score**, not the rank,
