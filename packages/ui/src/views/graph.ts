@@ -3,9 +3,11 @@ import louvain from 'graphology-communities-louvain'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
 import Sigma from 'sigma'
 import { api } from '../api.js'
-import type { GraphView } from '../api.js'
+import type { GraphView, NoteView } from '../api.js'
 import type { Screen, Surface } from '../app.js'
 import { el } from '../dom.js'
+import { markdownEditor } from '../editor.js'
+import type { NoteChoice } from '../editor.js'
 import { renderMarkdown } from '../markdown.js'
 
 /**
@@ -48,6 +50,21 @@ const DIMMED_EDGE = '#eceef1'
 const ACTIVE_EDGE = '#2f6feb'
 
 /**
+ * Everything the side panel needs to draw itself and write back.
+ *
+ * Passed as one value because the three functions that render into it — the
+ * note, the editor, the link dialog — each wanted a different four of these,
+ * and a fourth parameter list was one too many.
+ */
+interface Panel {
+  readonly surface: Surface
+  readonly detail: HTMLElement
+  readonly graph: Graph
+  /** What the editor's `[[` completes over. */
+  readonly notes: readonly NoteChoice[]
+}
+
+/**
  * What the two reducers read.
  *
  * One object rather than a variable per feature: hovering and searching both
@@ -79,10 +96,17 @@ export function graphScreen(): Screen {
     },
 
     async render(surface: Surface): Promise<void> {
-      const view = await api.graph(surface.project)
+      // The note list is for the editor's `[[` completion. Asked for alongside
+      // the graph rather than when Edit is first pressed, so opening the editor
+      // is instant and never fails halfway into a gesture.
+      const [view, listing] = await Promise.all([
+        api.graph(surface.project),
+        api.notes(surface.project, 500),
+      ])
 
       const canvas = el('div', { class: 'graph' })
       const detail = el('div', { class: 'graph-detail' })
+      const handle = el('div', { class: 'splitter', title: 'Drag to resize' })
       const query = el('input', {
         type: 'search',
         class: 'grow',
@@ -97,7 +121,9 @@ export function graphScreen(): Screen {
         }),
       )
 
-      surface.body.append(el('div', { class: 'split graph-split' }, [canvas, detail]))
+      const split = el('div', { class: 'split graph-split' }, [canvas, handle, detail])
+      surface.body.append(split)
+      wireSplitter(split, handle)
 
       // Sigma measures the container, so it has to be in the document first.
       const graph = build(view)
@@ -111,10 +137,11 @@ export function graphScreen(): Screen {
 
       live = renderer
 
-      const emphasis: Emphasis ={ hits: null, hovered: null, near: new Set(), linking: null }
+      const emphasis: Emphasis = { hits: null, hovered: null, near: new Set(), linking: null }
+      const panel: Panel = { surface, detail, graph, notes: listing.notes }
 
       wireEmphasis(renderer, graph, emphasis)
-      wireDragging(surface, renderer, graph, detail, emphasis)
+      wireDragging(panel, renderer, emphasis)
       wireHighlight(surface, renderer, query, emphasis)
 
       showHelp(detail)
@@ -184,6 +211,92 @@ function build(view: GraphView): Graph {
   }
 
   return graph
+}
+
+const PANEL_WIDTH = 'mnemonima.graph.panelWidth'
+const PANEL_MIN = 280
+const CANVAS_MIN = 320
+
+/**
+ * The bar between the graph and the panel, dragged to move it.
+ *
+ * The width is remembered per browser rather than per project: it is a property
+ * of the window somebody is reading in, not of the notes. The custom property is
+ * `--graph-panel` and not `--panel`, which is already the panel *colour* in
+ * `:root`: `var(--panel, 34%)` resolved to `#f6f7f9`, which made the whole
+ * grid-template declaration invalid and collapsed the screen into one column.
+ * `localStorage` is
+ * wrapped because a private window can refuse it, and a preview that will not
+ * open is a worse failure than one that forgets how wide it was.
+ *
+ * Sigma is not told anything. It watches its own container, so the canvas
+ * resizes and re-renders on its own as the column changes.
+ */
+function wireSplitter(split: HTMLElement, handle: HTMLElement): void {
+  const apply = (width: number): void => {
+    split.style.setProperty('--graph-panel', `${Math.round(width)}px`)
+  }
+
+  const remembered = Number(read(PANEL_WIDTH))
+  if (Number.isFinite(remembered) && remembered >= PANEL_MIN) apply(remembered)
+
+  let dragging = false
+
+  handle.addEventListener('pointerdown', (event) => {
+    dragging = true
+    handle.setPointerCapture((event as PointerEvent).pointerId)
+    handle.classList.add('dragging')
+    event.preventDefault()
+  })
+
+  handle.addEventListener('pointermove', (event) => {
+    if (!dragging) return
+
+    const box = split.getBoundingClientRect()
+    const wanted = box.right - (event as PointerEvent).clientX
+    const most = Math.max(PANEL_MIN, box.width - CANVAS_MIN)
+
+    apply(Math.min(most, Math.max(PANEL_MIN, wanted)))
+  })
+
+  const stop = (event: Event): void => {
+    if (!dragging) return
+    dragging = false
+    handle.releasePointerCapture((event as PointerEvent).pointerId)
+    handle.classList.remove('dragging')
+    write(PANEL_WIDTH, String(split.getBoundingClientRect().width - handleLeft(split, handle)))
+  }
+
+  handle.addEventListener('pointerup', stop)
+  handle.addEventListener('pointercancel', stop)
+
+  // Back to the default, for a panel dragged somewhere unusable.
+  handle.addEventListener('dblclick', () => {
+    split.style.removeProperty('--graph-panel')
+    write(PANEL_WIDTH, '')
+  })
+}
+
+/** How far the handle sits from the left edge of the split. */
+function handleLeft(split: HTMLElement, handle: HTMLElement): number {
+  return handle.getBoundingClientRect().right - split.getBoundingClientRect().left
+}
+
+function read(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function write(key: string, value: string): void {
+  try {
+    if (value === '') localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    // A browser that refuses storage still gets a working panel.
+  }
 }
 
 /** A stable pseudo-angle per id, so a reload starts from the same layout. */
@@ -277,13 +390,9 @@ function shiftHeld(original: MouseEvent | TouchEvent): boolean {
  * the edge of the layout: without it sigma recomputes the bounding box, and
  * dragging one node outward zooms the whole graph out from under the hand.
  */
-function wireDragging(
-  surface: Surface,
-  renderer: Sigma,
-  graph: Graph,
-  detail: HTMLElement,
-  emphasis: Emphasis,
-): void {
+function wireDragging(panel: Panel, renderer: Sigma, emphasis: Emphasis): void {
+  const { surface, detail, graph } = panel
+
   const camera = renderer.getCamera()
   const captor = renderer.getMouseCaptor()
   const container = renderer.getContainer()
@@ -354,7 +463,7 @@ function wireDragging(
     }
 
     if (!dragged) {
-      void showNote(surface, detail, source)
+      void showNote(panel, source)
       return
     }
 
@@ -376,7 +485,7 @@ function wireDragging(
       return
     }
 
-    confirmLink(surface, graph, detail, source, node)
+    confirmLink(panel, source, node)
   })
 
   captor.on('mouseup', finish)
@@ -424,53 +533,146 @@ function describePhantom(detail: HTMLElement, id: string): void {
  * and nothing after it. Reading a note is the reason to click one, and going to
  * the editor to do it loses the graph — and the layout just arranged by hand.
  */
-async function showNote(surface: Surface, detail: HTMLElement, id: string): Promise<void> {
+async function showNote(panel: Panel, id: string): Promise<void> {
+  const { surface, detail } = panel
+
   show(detail, [el('p', { class: 'hint', text: 'loading…' })])
 
   try {
     const note = await api.note(surface.project, id)
-
-    const body = el('div', { class: 'preview' })
-    // The one place this page produces markup, and every character of the note
-    // went through an escape on the way (see markdown.ts).
-    body.innerHTML = renderMarkdown(note.body)
-
-    show(detail, [
-      el('div', { class: 'graph-detail-head' }, [
-        el('h2', { text: note.title }),
-        el('p', { class: 'id', text: `${note.id} · rev ${note.rev} · ${note.status}` }),
-        el('p', {}, [
-          el('button', { text: 'Edit', onclick: () => surface.go('note', note.id) }),
-          el('span', {
-            class: 'hint',
-            text: ` ${note.links.length} out · ${note.backlinks.length} back`,
-          }),
-        ]),
-        ...(note.terms.length === 0
-          ? []
-          : [
-              el(
-                'p',
-                { class: 'terms' },
-                note.terms.slice(0, 12).map((term) => el('span', { class: 'tag', text: term.term })),
-              ),
-            ]),
-      ]),
-      body,
-    ])
-
-    // A wikilink in the preview moves the panel rather than leaving the graph.
-    body.addEventListener('click', (event) => {
-      const anchor = (event.target as Element | null)?.closest('a.wiki')
-      const href = anchor?.getAttribute('href') ?? ''
-      const target = href.startsWith('#note/') ? decodeURIComponent(href.slice(6)) : null
-      if (target === null) return
-
-      event.preventDefault()
-      void showNote(surface, detail, target)
-    })
+    showPreview(panel, note)
   } catch (error) {
     surface.fail(error)
+  }
+}
+
+function showPreview(panel: Panel, note: NoteView): void {
+  const { surface, detail } = panel
+
+  const body = el('div', { class: 'preview' })
+  // The one place this page produces markup, and every character of the note
+  // went through an escape on the way (see markdown.ts).
+  body.innerHTML = renderMarkdown(note.body)
+
+  show(detail, [
+    head(note, [
+      el('button', { text: 'Edit', onclick: () => showEditor(panel, note) }),
+      el('button', { text: 'Open', title: 'The full editor, with terms and backlinks', onclick: () => surface.go('note', note.id) }),
+      el('span', {
+        class: 'hint',
+        text: ` ${note.links.length} out · ${note.backlinks.length} back`,
+      }),
+    ]),
+    body,
+  ])
+
+  // A wikilink in the preview moves the panel rather than leaving the graph.
+  body.addEventListener('click', (event) => {
+    const anchor = (event.target as Element | null)?.closest('a.wiki')
+    const href = anchor?.getAttribute('href') ?? ''
+    const target = href.startsWith('#note/') ? decodeURIComponent(href.slice(6)) : null
+    if (target === null) return
+
+    event.preventDefault()
+    void showNote(panel, target)
+  })
+}
+
+/**
+ * The editor, in the panel, over the note that is selected.
+ *
+ * The same CodeMirror the notes screen uses, over the same `PUT` with the same
+ * `expectedRev`, so a second window editing the same note is refused here
+ * exactly as it is there. What this screen adds is not a shortcut around the
+ * write path — it is not having to leave the graph to use it.
+ */
+function showEditor(panel: Panel, note: NoteView): void {
+  const { surface, detail } = panel
+
+  const status = el('span', { class: 'hint' })
+  const code = el('div', { class: 'code' })
+
+  const save = el('button', {
+    class: 'primary',
+    text: 'Save',
+    onclick: async () => {
+      status.textContent = 'saving…'
+      status.className = 'hint'
+
+      try {
+        await api.updateNote(surface.project, note.id, view.state.doc.toString(), note.rev)
+
+        // Re-read rather than patching the note in hand: `PUT` answers with a
+        // revision number, and the daemon has meanwhile resolved the links the
+        // edit changed — which is what the graph needs.
+        const fresh = await api.note(surface.project, note.id)
+        syncEdges(panel, fresh)
+        showPreview(panel, fresh)
+      } catch (error) {
+        surface.fail(error)
+      }
+    },
+  })
+
+  const view = markdownEditor({
+    doc: note.body,
+    notes: panel.notes,
+    onChange: () => {
+      status.textContent = 'unsaved'
+      status.className = 'hint warn'
+    },
+    onSave: () => save.click(),
+  })
+
+  code.append(view.dom)
+
+  show(detail, [
+    head(note, [
+      save,
+      el('button', { text: 'Cancel', onclick: () => showPreview(panel, note) }),
+      status,
+    ]),
+    code,
+  ])
+
+  view.focus()
+}
+
+/** The title block every state of the panel shares. */
+function head(note: NoteView, actions: Node[]): HTMLElement {
+  return el('div', { class: 'graph-detail-head' }, [
+    el('h2', { text: note.title }),
+    el('p', { class: 'id', text: `${note.id} · rev ${note.rev} · ${note.status}` }),
+    el('p', { class: 'actions' }, actions),
+  ])
+}
+
+/**
+ * The edges of one note, brought up to date without rebuilding the graph.
+ *
+ * A save can add or remove a link, and the graph has to say so. Reloading the
+ * screen would be the easy way and is the wrong one: it re-runs the layout and
+ * throws away the arrangement somebody just made by hand.
+ *
+ * Only edges between notes that are already on screen. A brand new dangling
+ * target has no phantom node yet, and inventing one here would duplicate what
+ * `build` does from the server's own count — that one waits for a reload.
+ */
+function syncEdges(panel: Panel, note: NoteView): void {
+  const { graph } = panel
+  if (!graph.hasNode(note.id)) return
+
+  const wanted = new Set(
+    note.links.filter((link) => link.resolved && graph.hasNode(link.dst)).map((link) => link.dst),
+  )
+
+  for (const edge of graph.outEdges(note.id)) {
+    if (!wanted.has(graph.target(edge))) graph.dropEdge(edge)
+  }
+
+  for (const target of wanted) {
+    if (graph.hasEdge(note.id, target)) continue
+    graph.addDirectedEdge(note.id, target, { size: 1, color: '#c7ccd4', resolved: true })
   }
 }
 
@@ -478,13 +680,9 @@ function show(detail: HTMLElement, children: Node[]): void {
   detail.replaceChildren(...children)
 }
 
-function confirmLink(
-  surface: Surface,
-  graph: Graph,
-  detail: HTMLElement,
-  from: string,
-  to: string,
-): void {
+function confirmLink(panel: Panel, from: string, to: string): void {
+  const { surface, detail, graph } = panel
+
   const anchor = el('input', { class: 'grow', placeholder: 'anchor text (optional)' })
   const title = String(graph.getNodeAttribute(to, 'title') ?? to)
   const preview = el('code', { text: `- [[${to} ${title}]]` })

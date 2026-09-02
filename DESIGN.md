@@ -1101,6 +1101,18 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    Clicking a note **renders it in the panel beside the graph**, wikilinks and
    all; following one moves the panel rather than leaving the screen, because
    leaving loses the layout that was just arranged.
+
+   The column between them is **dragged to resize**, and the width is remembered
+   per browser — it is a property of the window somebody is reading in, not of
+   the notes. Double-clicking the bar puts it back.
+
+   The panel also **edits**. It is the same CodeMirror the notes screen uses,
+   over the same `PUT` with the same `expectedRev`, so a second window editing
+   the same note is refused here exactly as it is there; what this screen adds
+   is not a shortcut around the write path but not having to leave the graph to
+   use it. A save updates that note's edges **in place** rather than reloading
+   the screen, because reloading re-runs the layout and throws away the
+   arrangement somebody just made by hand.
 3. **Note editor** — CodeMirror 6, split preview, `[[` autocomplete over
    id/title/alias, a backlinks panel, manual terms in a field separate from the
    automatic ones, a "regenerate" button.

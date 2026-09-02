@@ -141,8 +141,15 @@ main {
   overflow: hidden;
 }
 
+/*
+ * `min-width` as well as `min-height`. A grid item defaults to
+ * `min-width: auto`, which refuses to shrink below its content — so moving
+ * the splitter widened the panel while the graph stayed its old width and
+ * slid underneath it.
+ */
 .split > * {
   overflow: auto;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -560,12 +567,43 @@ a:hover {
 /* ---- graph ------------------------------------------------------------ */
 
 /*
- * Wide enough to read a note in. The panel used to hold a title and a dozen
- * terms at 300px; it holds the rendered note now, and a table in 300px is a
- * column of scrollbars.
+ * Wide enough to read a note in, and movable from there. The panel used to be
+ * a fixed 300px, which was a column of scrollbars for anything with a table.
+ * `--panel` is set by the splitter and remembered per browser.
  */
 .graph-split {
-  grid-template-columns: 1fr minmax(360px, 34%);
+  grid-template-columns: 1fr 9px var(--graph-panel, 34%);
+  gap: 0;
+}
+
+.graph-split > .graph {
+  margin-right: 8px;
+}
+
+/*
+ * The bar between the two. `overflow: visible` undoes the `.split > *` rule,
+ * which would otherwise give a 9px column its own scrollbar; the wider hit area
+ * is a pseudo-element so the line itself can stay thin.
+ */
+.splitter {
+  position: relative;
+  cursor: col-resize;
+  overflow: visible;
+  touch-action: none;
+}
+
+.splitter::before {
+  content: "";
+  position: absolute;
+  inset: 0 4px;
+  background: var(--border);
+  border-radius: 1px;
+}
+
+.splitter:hover::before,
+.splitter.dragging::before {
+  background: var(--accent);
+  inset: 0 3px;
 }
 
 /*
@@ -702,4 +740,27 @@ a:hover {
   font-family: var(--mono);
   font-size: 20px;
   line-height: 1.2;
+}
+
+/* The panel's action row, and the editor when it stands in for the preview. */
+.graph-detail .actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.graph-detail .code {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.graph-detail .code .cm-editor {
+  height: auto;
+}
+
+.graph-detail .code .cm-content {
+  font-size: 13px;
 }

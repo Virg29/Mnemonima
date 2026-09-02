@@ -1,13 +1,8 @@
-import { autocompletion } from '@codemirror/autocomplete'
-import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { markdown } from '@codemirror/lang-markdown'
-import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { api } from '../api.js'
 import type { NoteView } from '../api.js'
 import type { Screen, Surface } from '../app.js'
 import { clear, el, when } from '../dom.js'
+import { markdownEditor } from '../editor.js'
 import { renderMarkdown } from '../markdown.js'
 
 /**
@@ -82,25 +77,15 @@ function renderEditor(
     preview.innerHTML = renderMarkdown(body)
   }
 
-  const view = new EditorView({
-    state: EditorState.create({
-      doc: note.body,
-      extensions: [
-        lineNumbers(),
-        history(),
-        markdown(),
-        placeholder('# Title\n\nThe body, in English.'),
-        autocompletion({ override: [wikilinks(notes)] }),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        EditorView.lineWrapping,
-        EditorView.updateListener.of((update) => {
-          if (!update.docChanged) return
-          repaint(update.state.doc.toString())
-          status.textContent = 'unsaved'
-          status.className = 'hint warn'
-        }),
-      ],
-    }),
+  const view = markdownEditor({
+    doc: note.body,
+    notes,
+    onChange: (body) => {
+      repaint(body)
+      status.textContent = 'unsaved'
+      status.className = 'hint warn'
+    },
+    onSave: () => save.click(),
   })
 
   repaint(note.body)
@@ -154,34 +139,6 @@ function renderEditor(
       sidebar(surface, note),
     ]),
   )
-}
-
-/** Completion over ids, titles and aliases, offered after `[[`. */
-function wikilinks(notes: { id: string; title: string }[]) {
-  return (context: CompletionContext): CompletionResult | null => {
-    const before = context.matchBefore(/\[\[[^\]\n]*/)
-    if (before === null) return null
-
-    const typed = before.text.slice(2).toLowerCase()
-
-    return {
-      from: before.from + 2,
-      options: notes
-        .filter(
-          (note) =>
-            typed === '' ||
-            note.id.toLowerCase().includes(typed) ||
-            note.title.toLowerCase().includes(typed),
-        )
-        .map((note) => ({
-          label: `${note.id} ${note.title}`,
-          detail: note.id,
-          // The id leads, so resolution never depends on the title, while
-          // Obsidian still shows something readable (DESIGN.md 5.1).
-          apply: `${note.id} ${note.title}]]`,
-        })),
-    }
-  }
 }
 
 function sidebar(surface: Surface, note: NoteView): HTMLElement {
