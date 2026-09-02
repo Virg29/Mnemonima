@@ -1106,8 +1106,8 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    theme: an unmatched note was painted near-white and came out brighter than
    every hit, the unmatched edges drew a bright web over the heat map, and the
    labels were black on near-black. The canvas is the one part of this page CSS
-   cannot restyle on its own, so the graph reads `prefers-color-scheme` itself
-   and repaints when it changes.
+   cannot restyle on its own, so the graph asks the theme module what the page
+   resolved to and repaints when that changes.
 
    The ramp is stretched across the returned set: the top hit is always at the
    hot end, the weakest returned always at the cold one. Keyed to the **score**, not the rank,
@@ -1171,6 +1171,18 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    operator that the settings do not work.
 9. **Health** — the `doctor` report plus the revision log filtered by author (so
    it is visible what the agent wrote).
+
+Across all of them, at the bottom of the sidebar: **light, dark, or follow the
+machine.** Three states and not a toggle, because "follow the system" is a real
+answer and a two-state switch would quietly freeze whichever value it started
+on. The choice is a browser preference kept in `localStorage` — it says nothing
+about the notes, and two people reading the same project should not be arguing
+over it.
+
+The **resolved** theme is stamped on the document, `auto` included, rather than
+the dark palette hanging off a media query. A stylesheet cannot share one rule
+between `@media (prefers-color-scheme: dark)` and `:root[data-theme="dark"]`, so
+the other arrangement means writing the palette out twice and maintaining both.
 
 Build: Vite, static files bundled into the npm package and served by the daemon.
 There is no separate dev server in production.

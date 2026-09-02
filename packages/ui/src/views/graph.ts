@@ -9,6 +9,7 @@ import { el } from '../dom.js'
 import { markdownEditor } from '../editor.js'
 import type { NoteChoice } from '../editor.js'
 import { renderMarkdown } from '../markdown.js'
+import { isDark, onThemeChange } from '../theme.js'
 
 /**
  * The graph — DESIGN.md 13.2.
@@ -59,14 +60,31 @@ const ACTIVE_EDGE = '#2f6feb'
 interface Ground {
   readonly dimNode: string
   readonly dimEdge: string
+  /** A resolved link, at rest. */
+  readonly edge: string
+  /** A link to an id that does not exist, at rest. */
+  readonly dangling: string
   readonly label: string
 }
 
-const LIGHT: Ground = { dimNode: '#dfe3e8', dimEdge: '#eceef1', label: '#14171c' }
-const DARK: Ground = { dimNode: '#2a3038', dimEdge: '#242a32', label: '#c9d0d9' }
+const LIGHT: Ground = {
+  dimNode: '#dfe3e8',
+  dimEdge: '#eceef1',
+  edge: '#c7ccd4',
+  dangling: '#e0a0a0',
+  label: '#14171c',
+}
+
+const DARK: Ground = {
+  dimNode: '#2a3038',
+  dimEdge: '#242a32',
+  edge: '#3b434e',
+  dangling: '#6d4046',
+  label: '#c9d0d9',
+}
 
 function currentGround(): Ground {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? DARK : LIGHT
+  return isDark() ? DARK : LIGHT
 }
 
 /**
@@ -440,9 +458,10 @@ function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
     renderer.refresh()
   }
 
-  // The operator can change the system theme with the page open, and the
-  // canvas is the one part of it CSS cannot restyle on its own.
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  // The theme can change with the page open — the switch in the sidebar, or the
+  // system moving under `auto` — and the canvas is the one part of the page CSS
+  // cannot restyle on its own.
+  onThemeChange(() => {
     ground = currentGround()
     paint()
   })
@@ -495,12 +514,19 @@ function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
         : { ...data, color: ground.dimEdge, zIndex: 0 }
     }
 
-    if (emphasis.hits === null) return data
+    // At rest, the ground decides. The colour a link is built with was picked
+    // for a white page and glowed on a dark one.
+    const resting = {
+      ...data,
+      color: data['resolved'] === false ? ground.dangling : ground.edge,
+    }
+
+    if (emphasis.hits === null) return resting
 
     // A search dims the edges too, or the highlighted notes sit in a web that
     // is just as loud as they are.
     const both = emphasis.hits.has(graph.source(edge)) && emphasis.hits.has(graph.target(edge))
-    return both ? data : { ...data, color: ground.dimEdge, zIndex: 0 }
+    return both ? resting : { ...data, color: ground.dimEdge, zIndex: 0 }
   })
 
   renderer.on('enterNode', ({ node }) => {

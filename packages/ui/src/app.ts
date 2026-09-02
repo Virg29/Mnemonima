@@ -1,5 +1,7 @@
 import { ApiError, api } from './api.js'
 import { clear, el } from './dom.js'
+import { currentTheme, setTheme } from './theme.js'
+import type { Theme } from './theme.js'
 
 /**
  * The shell: which project is selected, which screen is showing, and where an
@@ -97,6 +99,7 @@ export class App {
         el('div', {}, [el('h2', { text: 'Project' }), this.#projectPicker]),
         this.#nav,
         this.#sidebarExtra,
+        themeSwitch(),
       ]),
       el('main', {}, [this.#bar, this.#body]),
     )
@@ -239,5 +242,50 @@ export function failure(error: unknown): HTMLElement {
   return el('div', { class: 'error' }, [
     el('p', {}, [el('strong', { text: 'error: ' }), message]),
     ...(hint === null ? [] : [el('p', { class: 'hint', text: `hint: ${hint}` })]),
+  ])
+}
+
+/**
+ * Light, dark, or follow the machine — at the bottom of the sidebar, which is
+ * the one part of the page every screen shares.
+ *
+ * Three buttons rather than a toggle: "follow the system" is a real answer, and
+ * a two-state switch would quietly freeze whichever value it started on.
+ */
+function themeSwitch(): HTMLElement {
+  const options: readonly { value: Theme; label: string }[] = [
+    { value: 'auto', label: 'Auto' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' },
+  ]
+
+  const buttons = options.map((option) =>
+    el('button', {
+      type: 'button',
+      text: option.label,
+      title:
+        option.value === 'auto'
+          ? 'Follow the system setting'
+          : `Always ${option.value}, whatever the system says`,
+      // The literal string, not `true`: `el` writes a boolean as a bare
+      // attribute, and `aria-pressed=""` is neither valid ARIA nor a match for
+      // the stylesheet's `[aria-pressed="true"]`.
+      'aria-pressed': currentTheme() === option.value ? 'true' : 'false',
+      onclick: () => {
+        setTheme(option.value)
+        mark()
+      },
+    }),
+  )
+
+  const mark = (): void => {
+    for (const [index, button] of buttons.entries()) {
+      button.setAttribute('aria-pressed', String(options[index]?.value === currentTheme()))
+    }
+  }
+
+  return el('div', { class: 'theme' }, [
+    el('h2', { text: 'Theme' }),
+    el('div', { class: 'theme-choice' }, buttons),
   ])
 }

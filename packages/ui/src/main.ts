@@ -1,6 +1,7 @@
 import './styles.css'
 import { api } from './api.js'
 import { App, failure } from './app.js'
+import { startTheme } from './theme.js'
 import { evalScreen } from './views/eval.js'
 import { graphScreen } from './views/graph.js'
 import { healthScreen } from './views/health.js'
@@ -20,6 +21,8 @@ import { termsScreen } from './views/terms.js'
  */
 
 const root = document.querySelector<HTMLElement>('#app')
+
+startTheme()
 
 if (root !== null) {
   void (async () => {

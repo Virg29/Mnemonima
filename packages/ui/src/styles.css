@@ -1,5 +1,4 @@
 :root {
-  color-scheme: light dark;
   --bg: #ffffff;
   --panel: #f6f7f9;
   --border: #e2e5ea;
@@ -13,19 +12,22 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171c;
-    --panel: #1b1f26;
-    --border: #2a3038;
-    --text: #e6e9ee;
-    --muted: #9aa3af;
-    --accent: #6699ff;
-    --accent-soft: #1e2b45;
-    --ok: #55c08a;
-    --warn: #d9a441;
-    --bad: #f2857c;
-  }
+/*
+ * One dark palette, keyed to the resolved theme that `theme.ts` stamps on the
+ * document — `auto` included. A media query cannot share a rule with an
+ * attribute selector, so keying off both would mean writing this out twice.
+ */
+:root[data-theme="dark"] {
+  --bg: #14171c;
+  --panel: #1b1f26;
+  --border: #2a3038;
+  --text: #e6e9ee;
+  --muted: #9aa3af;
+  --accent: #6699ff;
+  --accent-soft: #1e2b45;
+  --ok: #55c08a;
+  --warn: #d9a441;
+  --bad: #f2857c;
 }
 
 * {
@@ -784,4 +786,48 @@ a:hover {
   height: 8px;
   border-radius: 4px;
   border: 1px solid var(--border);
+}
+
+/* ---- theme switch ------------------------------------------------------ */
+
+/*
+ * Pinned to the bottom of the sidebar: reachable from every screen, and out of
+ * the way of the thing every screen is actually for.
+ */
+.theme {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.theme-choice {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  background: var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.theme-choice button {
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  padding: 5px 0;
+  cursor: pointer;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+}
+
+.theme-choice button:hover {
+  color: var(--text);
+}
+
+/* The same "you are here" as the nav, which on the dark theme a plain
+ * background swap does not give: --bg and --border sit a few points apart. */
+.theme-choice button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }
