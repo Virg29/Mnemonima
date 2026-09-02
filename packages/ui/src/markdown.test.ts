@@ -31,9 +31,19 @@ describe('the preview renderer', () => {
   it('escapes inside a fenced block as well', () => {
     const html = renderMarkdown(['```html', '<img onerror="alert(1)">', '```'].join('\n'))
 
-    expect(html).toContain('<pre><code>')
+    expect(html).toContain('<pre><code class="language-html">')
     expect(html).not.toContain('<img')
     expect(html).toContain('&lt;img')
+  })
+
+  it('renders raw html in prose as the text it is', () => {
+    // A note that documents a generic type writes `<T>` in a sentence. The
+    // lexer reports it as an html token; a preview that executed it would be
+    // rendering somebody else's markup.
+    const html = renderMarkdown('The signature takes a <T> and returns one.')
+
+    expect(html).toContain('&lt;T&gt;')
+    expect(html).not.toContain('<T>')
   })
 
   it('refuses a link scheme that is not http or our own hash', () => {
@@ -67,6 +77,64 @@ describe('the preview renderer', () => {
 
     expect(html).toContain('<code>**not bold**</code>')
     expect(html).not.toContain('<strong>')
+  })
+})
+
+/**
+ * The constructs the hand-rolled renderer did not cover.
+ *
+ * Tables are why it was replaced: a real project's notes are full of them, and
+ * five lines of pipes is not a preview of anything.
+ */
+describe('what a parser brings that a line loop did not', () => {
+  it('renders a table', () => {
+    const html = renderMarkdown(
+      ['| Signal | Answers |', '| --- | --- |', '| YAKE | inside this note |'].join('\n'),
+    )
+
+    expect(html).toContain('<table>')
+    expect(html).toContain('<th>Signal</th>')
+    expect(html).toContain('<td>YAKE</td>')
+  })
+
+  it('keeps a table column alignment', () => {
+    const html = renderMarkdown(['| n |', '| --: |', '| 1 |'].join('\n'))
+
+    expect(html).toContain('text-align:right')
+  })
+
+  it('renders an ordered list, from the number it starts at', () => {
+    const html = renderMarkdown(['3. three', '4. four'].join('\n'))
+
+    expect(html).toContain('<ol start="3">')
+    expect(html).toContain('three')
+  })
+
+  it('nests a list inside a list', () => {
+    const html = renderMarkdown(['- outer', '  - inner'].join('\n'))
+
+    expect(html).toContain('inner')
+    expect(html.indexOf('<ul>')).toBeLessThan(html.lastIndexOf('<ul>'))
+  })
+
+  it('draws a task list, with the box disabled', () => {
+    const html = renderMarkdown(['- [x] done', '- [ ] not done'].join('\n'))
+
+    expect(html).toContain('type="checkbox"')
+    expect(html).toContain('disabled')
+    expect(html).toContain('checked')
+  })
+
+  it('renders a rule and a strikethrough', () => {
+    expect(renderMarkdown('---')).toContain('<hr>')
+    expect(renderMarkdown('~~gone~~')).toContain('<del>gone</del>')
+  })
+
+  it('refuses an image source that is not one of ours', () => {
+    const html = renderMarkdown('![alt](javascript:alert(1))')
+
+    expect(html).not.toContain('<img')
+    expect(html).toContain('alt')
   })
 })
 

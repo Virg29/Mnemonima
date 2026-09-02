@@ -1088,8 +1088,19 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
    are highlighted right on the graph, dangling links are dashed edges into
    "phantom" nodes.
 
-   **Link creation by dragging** (see §13.1). There is no edge deletion with the
-   mouse — a link is removed only by editing the body in the editor.
+   Three gestures, and which one is which was worth deciding rather than
+   inheriting. **A drag moves a node**, because that is what dragging a node
+   does everywhere else and because a layout arranged by hand is the only one
+   that means anything to the person who arranged it. **Hovering** keeps a note
+   and its neighbours lit, draws the edges between them in the accent colour,
+   and flattens the rest — the graph is usually being asked what *this* note is
+   connected to, not what the corpus looks like. **Link creation moved onto
+   shift-drag** (see §13.1). There is still no edge deletion with the mouse — a
+   link is removed only by editing the body in the editor.
+
+   Clicking a note **renders it in the panel beside the graph**, wikilinks and
+   all; following one moves the panel rather than leaving the screen, because
+   leaving loses the layout that was just arranged.
 3. **Note editor** — CodeMirror 6, split preview, `[[` autocomplete over
    id/title/alias, a backlinks panel, manual terms in a field separate from the
    automatic ones, a "regenerate" button.
@@ -1127,7 +1138,7 @@ The only mutating operation on the graph. It has a single requirement: **never
 touch meaningful note text.**
 
 Mechanics:
-1. The user drags from node A to node B → a confirmation dialog with a preview of
+1. The user shift-drags from node A to node B → a confirmation dialog with a preview of
    the line that will be appended and a field for anchor text (optional).
 2. In the body of A we look for a `## Related` section. If there is none, it is
    created at the very end of the body.
@@ -1146,6 +1157,29 @@ prose or in `Related`), the dialog says so and offers only to change the anchor.
 
 The direction is set by the direction of the drag. The backlink on B appears by
 itself, from `links` (§3.4) — note B is not touched.
+
+### 13.2 The preview renderer
+
+Both previews — the editor's and the graph panel's — go through one renderer in
+the page. It parses with `marked` and assembles the markup itself, token by
+token.
+
+That division is the point. A note body is operator-authored text the page did
+not write, so the set of tags that can reach the document has to be a list
+somebody chose: raw HTML in a note is rendered as the text it is, and a link is
+dropped unless its scheme is `http(s)`, `mailto` or one of our own routes.
+Handing a library a string and assigning its output to `innerHTML` gives that
+decision away.
+
+It replaced a hand-rolled line loop that knew headings, paragraphs, bullet
+lists, quotes and fences and nothing else. **Tables are why.** Notes in a real
+project are full of them, and a table shown as five lines of pipes is not a
+preview of anything. Ordered lists, nested lists, task lists, images and rules
+came with the parser rather than as five more regular expressions.
+
+`core/markdown.ts` remains the parser of record: everything the engine derives —
+chunks, the outline, links, terms — comes from remark on the server. This one
+only has to look right.
 
 ---
 

@@ -451,10 +451,166 @@ a:hover {
   color: var(--muted);
 }
 
+/* The rest of what a real markdown parser can now hand us. */
+
+.preview h4,
+.preview h5,
+.preview h6 {
+  font-size: 14px;
+  margin: 14px 0 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.preview ul,
+.preview ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.preview li {
+  margin: 2px 0;
+}
+
+.preview li > p {
+  margin: 0 0 4px;
+}
+
+.preview li.task {
+  list-style: none;
+  margin-left: -18px;
+}
+
+.preview li.task input {
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+}
+
+.preview blockquote {
+  margin: 0 0 10px;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+.preview blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.preview hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+.preview img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+.preview del {
+  color: var(--muted);
+}
+
+/*
+ * Tables get their own rules rather than the app's `.grid`, whose headings are
+ * uppercase small caps. That reads as a label above a list of records; a table
+ * in a note is prose in columns and has to look like the document around it.
+ *
+ * The wrapper scrolls rather than the page: a wide table in a narrow panel is
+ * normal, and a horizontal scrollbar on the whole preview would move the text
+ * as well.
+ */
+.preview table {
+  border-collapse: collapse;
+  margin: 0 0 12px;
+  font-size: 13px;
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.preview th,
+.preview td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.preview th {
+  background: var(--panel);
+  font-weight: 600;
+}
+
+.preview tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+}
+
+.preview :is(h1, h2, h3, h4) + :is(h2, h3, h4) {
+  margin-top: 8px;
+}
+
+.preview > :last-child {
+  margin-bottom: 0;
+}
+
 /* ---- graph ------------------------------------------------------------ */
 
+/*
+ * Wide enough to read a note in. The panel used to hold a title and a dozen
+ * terms at 300px; it holds the rendered note now, and a table in 300px is a
+ * column of scrollbars.
+ */
 .graph-split {
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: 1fr minmax(360px, 34%);
+}
+
+/*
+ * A block, not a flex column. The panel holds bar controls that carry
+ * `.grow` — meant to fill a horizontal bar — and in a column that grow runs
+ * down instead: the link dialog's anchor field came out 359px tall. Sticky
+ * positioning works against the scroll container either way.
+ */
+.graph-detail {
+  padding-right: 4px;
+}
+
+/* The title stays put while the body scrolls under it. */
+.graph-detail-head {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  z-index: 1;
+}
+
+.graph-detail-head p {
+  margin: 4px 0;
+}
+
+.graph-detail .terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.graph-detail .preview {
+  padding: 4px 0 24px;
+}
+
+.graph-detail .help {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.graph-detail .help li {
+  margin: 3px 0;
 }
 
 .graph {

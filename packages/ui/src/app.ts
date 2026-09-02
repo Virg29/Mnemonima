@@ -20,6 +20,17 @@ export interface Screen {
   /** Screens that read a project are disabled until one is chosen. */
   readonly needsProject: boolean
   render(surface: Surface): void | Promise<void>
+  /**
+   * Called before the next screen renders, for a screen that owns something the
+   * document does not.
+   *
+   * Clearing the body is enough for everything built out of `el`. It is not
+   * enough for the graph: sigma keeps a `ResizeObserver` and an animation frame
+   * on a container that has just been removed, and goes on measuring it. Every
+   * visit left another one behind, each throwing "Container has no width" into
+   * the console from then on.
+   */
+  leave?(): void
 }
 
 export interface Surface {
@@ -166,6 +177,10 @@ export class App {
   async #render(id: string): Promise<void> {
     const screen = this.#screens.get(id)
     if (screen === undefined) return
+
+    // Including a re-render of the same screen: `reload` goes through here, and
+    // the graph is the screen most often reloaded.
+    this.#screens.get(this.#current)?.leave?.()
 
     this.#current = id
     this.#renderNav()

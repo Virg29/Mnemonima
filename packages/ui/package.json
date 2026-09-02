@@ -24,6 +24,7 @@
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.1",
     "graphology-layout-forceatlas2": "^0.10.1",
+    "marked": "^18.0.11",
     "sigma": "^3.0.1",
     "vite": "^6.0.5"
   }
