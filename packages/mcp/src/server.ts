@@ -20,6 +20,17 @@ import type { DaemonClient } from '@mnemonima/daemon'
  *  - **Destructive tools are refused unless the project allows them.** The
  *    daemon enforces it; the descriptions say so, so an agent learns the rule by
  *    reading rather than by failing.
+ *
+ * The descriptions are the documentation an agent gets, so they carry the rules
+ * it would otherwise learn by being wrong: that a write indexes itself and
+ * calling `mnemonima_index` after every note is wasted work, that most passages
+ * of a long note "match" and only the scoring ones are evidence, that a dangling
+ * link is data. When behaviour changes, the description is part of the change.
+ *
+ * Deliberately absent: the graph layout, which is where a human dragged a node
+ * and says nothing about the knowledge; and the eval harness, which measures
+ * retrieval for an operator tuning it rather than for an agent using it. Both
+ * have routes on the daemon and neither has a tool.
  */
 
 export interface McpOptions {
@@ -101,8 +112,10 @@ export function createMcpServer(options: McpOptions): McpServer {
         'share no words), lexical (BM25 only, for exact terms and identifiers), exact ' +
         '(grep; /pattern/flags is a regular expression), id (direct lookup), graph (walk ' +
         'the link graph from a note). Queries must be in English. Every hit carries a ' +
-        '"why" breakdown whose parts add up to the score. Set expandLinks to 1 to get each ' +
-        'hit together with its direct neighbours, which is cheaper than a second call.',
+        '"why" breakdown whose parts add up to the score, and two snippets of the passages ' +
+        'that matched. Set expandLinks to 1 to get each hit together with its direct ' +
+        'neighbours, which is cheaper than a second call. To see every passage a note ' +
+        'matched, and which half of the score each came from, use mnemonima_explain.',
       inputSchema: {
         query: z.string().describe('what to search for, in English'),
         mode: z.enum(['hybrid', 'semantic', 'lexical', 'exact', 'id', 'graph']).optional(),
@@ -143,9 +156,78 @@ export function createMcpServer(options: McpOptions): McpServer {
     'mnemonima_graph',
     {
       title: 'Read the whole link graph',
-      description: 'Every note as a node with its degree, and every resolved link as an edge.',
+      description:
+        'Every note as a node with its degree, and every link as an edge. Links that point ' +
+        'at an id no note has come back too, as phantom nodes on edges marked unresolved: a ' +
+        'dangling link is data, not corruption, and hiding it would hide the case worth ' +
+        'seeing. The "layout" field is where notes have been placed by hand on the graph ' +
+        'screen; it is presentation, not knowledge, and nothing here writes to it.',
     },
     () => client.call('GET', `${base}/graph`),
+  )
+
+  tool(
+    'mnemonima_explain',
+    {
+      title: 'Why a note came back for a query',
+      description:
+        'Every passage of one note that a query matched, each with the two halves of its ' +
+        'score, plus the words the lexical pass looked for and which of the note’s own ' +
+        'title, aliases and terms they hit. Search returns two snippets per hit; this ' +
+        'returns all of them.\n' +
+        '\n' +
+        'Read "scoring: true" carefully — those are the passages that actually produced the ' +
+        'score. Fusion reads the best chunk of each strategy and nothing else; every other ' +
+        'match reaches the score through a count. Most passages of a long note come back as ' +
+        'matches because a cosine sits near 0.7 even for unrelated text, so treating them ' +
+        'all as evidence is the mistake this field exists to prevent.\n' +
+        '\n' +
+        'The vector half cannot be attributed to a word: a note can rank first sharing no ' +
+        'word with the query. "words" is what BM25 looked for, not why the note won.',
+      inputSchema: {
+        id: z.string().describe('note id, for example SL-0042'),
+        query: z.string().describe('the query to explain it against, in English'),
+      },
+    },
+    (args) =>
+      client.call(
+        'GET',
+        `${base}/notes/${encodeURIComponent(String(args['id']))}/explain` +
+          `?q=${encodeURIComponent(String(args['query']))}`,
+      ),
+  )
+
+  tool(
+    'mnemonima_doctor',
+    {
+      title: 'Check the knowledge base for damage',
+      description:
+        'What is wrong with this project: links pointing at ids that do not exist, notes ' +
+        'nothing links to, notes that are not in the index, notes that failed the English ' +
+        'gate, duplicate aliases, and chunks with no vector. Read this after a session of ' +
+        'writing to see what you left behind — a dangling link usually means a note you ' +
+        'meant to create and did not.\n' +
+        '\n' +
+        'Reporting only. The two mechanical repairs are `mnemonima doctor --fix` on the ' +
+        'command line, because deciding to change data is the operator’s.',
+    },
+    () => client.call('GET', `${base}/doctor`),
+  )
+
+  tool(
+    'mnemonima_config',
+    {
+      title: 'Read the project settings',
+      description:
+        'Every setting this project runs with, the dotted paths they can be set by, and ' +
+        'where an export would actually land. Worth reading before you assume: ' +
+        'mcp.allowDestructive says whether the gated tools will work at all, index.auto and ' +
+        'index.debounceSec say how long after a write a note becomes searchable, and ' +
+        'export.enabled with export.path say whether files are being written and where.\n' +
+        '\n' +
+        'Reading only. Changing a setting is the operator’s: `mnemonima config set`.',
+    },
+    () => client.call('GET', `${base}/config`),
   )
 
   tool(
@@ -170,6 +252,51 @@ export function createMcpServer(options: McpOptions): McpServer {
       ),
   )
 
+  tool(
+    'mnemonima_history',
+    {
+      title: 'Read the revision log',
+      description:
+        'What changed, when, and who changed it. With a note id: that note\'s revisions, ' +
+        'newest first. Without one: the write batches, so a session can be found before it ' +
+        'is undone. Pass a revision to read the body as it was then, or two to see what ' +
+        'changed between them — reading never restores, mnemonima_undo is what puts a note ' +
+        'back. Revision 0 means the note as it stands, so from alone compares that revision ' +
+        'with the note now, and neither from nor to shows the last edit.',
+      inputSchema: {
+        id: z.string().optional(),
+        rev: z.number().int().nonnegative().optional(),
+        from: z.number().int().nonnegative().optional(),
+        to: z.number().int().nonnegative().optional(),
+        limit: z.number().int().positive().optional(),
+      },
+    },
+    (args) => {
+      const id = args['id'] as string | undefined
+      const from = args['from'] as number | undefined
+      const to = args['to'] as number | undefined
+      const rev = args['rev'] as number | undefined
+
+      if (id === undefined) {
+        return client.call('GET', `${base}/batches?limit=${args['limit'] ?? 20}`)
+      }
+
+      if (from !== undefined || to !== undefined) {
+        const query = new URLSearchParams()
+        if (from !== undefined) query.set('from', String(from))
+        if (to !== undefined) query.set('to', String(to))
+
+        return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/diff?${query}`)
+      }
+
+      if (rev !== undefined) {
+        return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/revisions/${rev}`)
+      }
+
+      return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/revisions`)
+    },
+  )
+
   // ---- writing -----------------------------------------------------------
 
   tool(
@@ -181,7 +308,8 @@ export function createMcpServer(options: McpOptions): McpServer {
         'is refused rather than indexed badly. The title comes from the first level-one ' +
         'heading unless you pass one. Link to other notes with [[SL-0042]] in the body. ' +
         `Recorded under batch ${batchId}, so everything this session writes can be taken ` +
-        'back with one command.',
+        'back with one command. Indexing and export follow on their own once the writing ' +
+        'stops; call mnemonima_index only when you need it searchable immediately.',
       inputSchema: {
         body: z.string().describe('markdown body, in English'),
         title: z.string().optional(),
@@ -337,7 +465,8 @@ export function createMcpServer(options: McpOptions): McpServer {
       title: 'Undo writes',
       description:
         'Take back everything a session wrote. With no arguments this undoes the current ' +
-        `session, batch ${batchId}. Pass a note id together with a revision to put just that ` +
+        `session, batch ${batchId}; find another one with mnemonima_history. Pass a note id ` +
+        'together with a revision to put just that ' +
         'note back instead. Nothing is destroyed: an undo is itself a revision, and a note ' +
         'the batch created is archived rather than deleted.',
       inputSchema: {
@@ -354,50 +483,6 @@ export function createMcpServer(options: McpOptions): McpServer {
       ),
   )
 
-  tool(
-    'mnemonima_history',
-    {
-      title: 'Read the revision log',
-      description:
-        'What changed, when, and who changed it. With a note id: that note\'s revisions, ' +
-        'newest first. Without one: the write batches, so a session can be found before it ' +
-        'is undone. Pass a revision to read the body as it was then, or two to see what ' +
-        'changed between them — reading never restores, mnemonima_undo is what puts a note ' +
-        'back.',
-      inputSchema: {
-        id: z.string().optional(),
-        rev: z.number().int().nonnegative().optional(),
-        from: z.number().int().nonnegative().optional(),
-        to: z.number().int().nonnegative().optional(),
-        limit: z.number().int().positive().optional(),
-      },
-    },
-    (args) => {
-      const id = args['id'] as string | undefined
-      const from = args['from'] as number | undefined
-      const to = args['to'] as number | undefined
-      const rev = args['rev'] as number | undefined
-
-      if (id === undefined) {
-        return client.call('GET', `${base}/batches?limit=${args['limit'] ?? 20}`)
-      }
-
-      if (from !== undefined || to !== undefined) {
-        const query = new URLSearchParams()
-        if (from !== undefined) query.set('from', String(from))
-        if (to !== undefined) query.set('to', String(to))
-
-        return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/diff?${query}`)
-      }
-
-      if (rev !== undefined) {
-        return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/revisions/${rev}`)
-      }
-
-      return client.call('GET', `${base}/notes/${encodeURIComponent(id)}/revisions`)
-    },
-  )
-
   // ---- administration ----------------------------------------------------
 
   tool(
@@ -405,9 +490,13 @@ export function createMcpServer(options: McpOptions): McpServer {
     {
       title: 'Rebuild the search index',
       description:
-        'Chunk and embed everything that changed. Notes are not searchable until this has ' +
-        'run. Cheap to repeat: only chunks whose text changed are re-embedded. Rebuilding ' +
-        'with a different model is destructive and is gated.',
+        'Chunk and embed everything that changed. **You usually do not need this.** Every ' +
+        'write through these tools schedules an index of its own, which runs once the ' +
+        'writing stops (index.auto, thirty seconds by default), so a note becomes searchable ' +
+        'without being told to. Call this when you want that now rather than in half a ' +
+        'minute — searching for something you just wrote is the case. Cheap to repeat: only ' +
+        'chunks whose text changed are re-embedded. Rebuilding with a different model is ' +
+        'destructive and is gated.',
       inputSchema: {
         full: z.boolean().optional(),
         model: z.string().optional(),
@@ -422,7 +511,11 @@ export function createMcpServer(options: McpOptions): McpServer {
       title: 'Export the notes as markdown',
       description:
         'Write every note out as a markdown file and commit it, if the export directory is a ' +
-        'git repository. Pushing is never automatic and is not offered here.',
+        'git repository. Also automatic after a write, so this is for doing it now. The ' +
+        'directory has to exist already — we keep a vault up to date, we do not conjure one ' +
+        'because a note was written — and the export does nothing at all when it is missing. ' +
+        'Read export.path with mnemonima_config to see where that is. Pushing is never ' +
+        'automatic and is not offered here.',
     },
     () => client.call('POST', `${base}/export`, {}),
   )

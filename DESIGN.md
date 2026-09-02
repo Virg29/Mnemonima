@@ -937,19 +937,26 @@ GET    /ui/*
 
 ### 10.3 MCP server
 
-Full access (read + write + administration), as decided. Twenty tools as
+Full access (read + write + administration), as decided. Twenty-three tools as
 built — the shape held, the list grew as the write path did:
 
 | Tools | Category |
 |---|---|
-| `mnemonima_search`, `mnemonima_get_note`, `mnemonima_list_notes`, `mnemonima_list_terms`, `mnemonima_graph`, `mnemonima_history` | read (6) |
+| `mnemonima_search`, `mnemonima_get_note`, `mnemonima_list_notes`, `mnemonima_list_terms`, `mnemonima_graph`, `mnemonima_explain`, `mnemonima_history`, `mnemonima_doctor`, `mnemonima_config` | read (9) |
 | `mnemonima_create_note`, `mnemonima_update_note`, `mnemonima_archive_note`, `mnemonima_delete_note`, `mnemonima_link`, `mnemonima_unlink`, `mnemonima_add_alias`, `mnemonima_add_term`, `mnemonima_block_term`, `mnemonima_remove_term`, `mnemonima_undo` | write (11) |
 | `mnemonima_index`, `mnemonima_export`, `mnemonima_status` | administration (3) |
 
 There is no `mnemonima_list_projects`: the session is bound to one project
 (point 5 below), so listing the others would be an invitation to a write that
 cannot be expressed anyway. Switching the model and setting weights stayed in
-the CLI, and `mnemonima_run_eval` waits for stage 9.
+the CLI — `mnemonima_config` **reads** the settings, because an agent that can
+see `mcp.allowDestructive` and `index.debounceSec` stops guessing at them, but
+changing one is the operator's.
+
+Two routes the daemon has and MCP deliberately does not: the **graph layout**,
+which records where a human dragged a node and says nothing about the
+knowledge; and the **eval harness**, which measures retrieval for an operator
+tuning it rather than for an agent using it.
 
 **Mandatory consequences of full access** (otherwise one bad agent run pollutes
 the graph):
@@ -1537,7 +1544,7 @@ and that is a perfectly normal outcome.
 | **4. Terms** | **done** | YAKE + IDF + KeyBERT + structural, gazetteer, dictionary, promotion, 4 knobs | `terms list --candidates` makes sense |
 | **5. Daemon** | **done** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
 | **6. Markdown bridge** | **done** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
-| **7. MCP** | **done** | twenty tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
+| **7. MCP** | **done** | twenty-three tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
 | **8. UI** | **done** | projects → graph → editor → search lab → terms → spaces → eval → settings → health | tuning the weights live with `why` |
 | **9. Eval** | **done** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
 | **10+. Post-MVP** | `adopt` **done**; rerank not started | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
@@ -1651,7 +1658,7 @@ the link graph with derived backlinks, preserved dangling targets, the graph
 boost and expansion; term extraction fusing YAKE, corpus IDF and candidate
 embeddings on top of the manual gazetteer; the local daemon with its hot-project
 pool; the markdown bridge with conflict resolution and git; and the MCP server
-with twenty tools, every write attributed, batched and undoable.
+with twenty-three tools, every write attributed, batched and undoable.
 
 … and the web UI: seven screens over the daemon's API, with the search lab
 tuning every weight live against a warm index and the graph creating a link by
