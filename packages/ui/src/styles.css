@@ -764,3 +764,24 @@ a:hover {
 .graph-detail .code .cm-content {
   font-size: 13px;
 }
+
+/*
+ * The key to the search ramp. Hidden until a query returns something: a colour
+ * scale with nothing painted in those colours explains nothing.
+ */
+.heat-legend {
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.heat-legend.on {
+  display: inline-flex;
+}
+
+.heat-strip {
+  width: 84px;
+  height: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}

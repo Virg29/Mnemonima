@@ -1084,9 +1084,25 @@ only be a second way to say the same thing. **`eval`** arrives with stage 9, and
 
 1. **Projects** — the registry, statistics, adding a project.
 2. **Graph** — a force-directed graph. **graphology + sigma.js** (WebGL, handles
-   10k+ nodes); node size = degree, colour = cluster (Louvain), search results
-   are highlighted right on the graph, dangling links are dashed edges into
-   "phantom" nodes.
+   10k+ nodes); node size = degree, colour = cluster (Louvain), dangling links
+   are dashed edges into "phantom" nodes.
+
+   **A search paints its results as a heat map.** Everything it did not match
+   goes flat grey, and every hit is repainted along a thermal ramp — red for
+   the strongest match, blue through green for the weakest — and sized to
+   match, so the best answers are what the eye lands on. The cluster colour
+   answers which group a note belongs to, which is the wrong question while a
+   query is on screen.
+
+   The ramp is stretched across the returned set: the top hit is always red,
+   the weakest returned always blue. Keyed to the **score**, not the rank,
+   because the two differ exactly where it matters — a note tied with the top
+   stays red instead of being demoted for coming second, and one that scored
+   half as well sits halfway down the ramp whatever position it holds. It is
+   the same trade the fusion already makes for BM25 (§8.4): a per-set
+   normalisation says nothing about how one query compares with another and
+   everything about how these results compare with each other, which is the
+   only question a picture of one result set can answer.
 
    Three gestures, and which one is which was worth deciding rather than
    inheriting. **A drag moves a node**, because that is what dragging a node

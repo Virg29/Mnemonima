@@ -50,6 +50,38 @@ const DIMMED_EDGE = '#eceef1'
 const ACTIVE_EDGE = '#2f6feb'
 
 /**
+ * The ramp a search paints its hits with: red for the strongest match, blue for
+ * the weakest, through the stops a thermal camera would use.
+ *
+ * Given as RGB triples because sigma's colour parser reads hex, `rgb()` and the
+ * named HTML colours and nothing else — an `hsl()` string does not fail, it
+ * comes out black.
+ */
+const HEAT: readonly (readonly [number, number, number])[] = [
+  [47, 87, 214],
+  [23, 150, 190],
+  [26, 160, 90],
+  [214, 178, 24],
+  [226, 124, 20],
+  [206, 32, 38],
+]
+
+/** A point on that ramp, `0` cold and `1` hot. */
+function heat(value: number): string {
+  const t = Math.min(1, Math.max(0, value))
+  const scaled = t * (HEAT.length - 1)
+  const index = Math.min(HEAT.length - 2, Math.floor(scaled))
+  const fraction = scaled - index
+
+  const from = HEAT[index] ?? HEAT[0]!
+  const to = HEAT[index + 1] ?? HEAT[HEAT.length - 1]!
+  const mix = (channel: 0 | 1 | 2): number =>
+    Math.round(from[channel] + (to[channel] - from[channel]) * fraction)
+
+  return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`
+}
+
+/**
  * Everything the side panel needs to draw itself and write back.
  *
  * Passed as one value because the three functions that render into it — the
@@ -72,8 +104,11 @@ interface Panel {
  * overwrite the other's answer depending on which refreshed last.
  */
 interface Emphasis {
-  /** The notes a search matched, or null when the box is empty. */
-  hits: Set<string> | null
+  /**
+   * What a search matched, each note against its heat in `[0, 1]`, or null
+   * when the box is empty.
+   */
+  hits: Map<string, number> | null
   /** The note under the pointer. */
   hovered: string | null
   /** The hovered note and its neighbours. */
@@ -113,8 +148,11 @@ export function graphScreen(): Screen {
         placeholder: 'highlight the notes that match…',
       })
 
+      const legend = heatLegend()
+
       surface.bar.append(
         query,
+        legend,
         el('span', {
           class: 'hint',
           text: `${view.nodes.length} notes, ${view.edges.length} links, ${view.phantoms.length} dangling`,
@@ -143,7 +181,7 @@ export function graphScreen(): Screen {
 
       wireEmphasis(renderer, graph, emphasis)
       wireDragging(panel, renderer, emphasis)
-      wireHighlight(surface, renderer, query, emphasis)
+      wireHighlight(surface, renderer, query, legend, emphasis)
 
       showHelp(detail)
     },
@@ -367,22 +405,40 @@ function hash(id: string): number {
  */
 function wireEmphasis(renderer: Sigma, graph: Graph, emphasis: Emphasis): void {
   renderer.setSetting('nodeReducer', (node, data) => {
+    // A hit is repainted rather than merely enlarged. The Louvain colour says
+    // which cluster a note belongs to, which is the wrong question while a
+    // query is on screen; the heat says how well it answered it. Size follows
+    // the same number, so the best answers are what the eye lands on.
+    //
+    // Applied first, as the base every other state builds on, so that hovering
+    // during a search keeps the heat instead of putting the cluster colours
+    // back under the pointer.
+    const hit = emphasis.hits?.get(node)
+    const base =
+      hit === undefined
+        ? data
+        : {
+            ...data,
+            color: heat(hit),
+            size: Number(data['size'] ?? 4) * (1.25 + hit * 0.75),
+          }
+
+    const size = Number(base['size'] ?? 4)
+
     if (emphasis.linking === node) {
-      return { ...data, zIndex: 2, size: Number(data['size'] ?? 4) * 1.4, highlighted: true }
+      return { ...base, zIndex: 2, size: size * 1.4, highlighted: true }
     }
 
     if (emphasis.hovered !== null) {
       if (node === emphasis.hovered) {
-        return { ...data, zIndex: 2, size: Number(data['size'] ?? 4) * 1.4, forceLabel: true }
+        return { ...base, zIndex: 2, size: size * 1.4, forceLabel: true }
       }
-      if (emphasis.near.has(node)) return { ...data, zIndex: 1, forceLabel: true }
+      if (emphasis.near.has(node)) return { ...base, zIndex: 1, forceLabel: true }
       return { ...data, color: DIMMED_NODE, label: '', zIndex: 0 }
     }
 
     if (emphasis.hits === null) return data
-    if (emphasis.hits.has(node)) {
-      return { ...data, zIndex: 1, size: Number(data['size'] ?? 4) * 1.6 }
-    }
+    if (hit !== undefined) return { ...base, zIndex: 1, forceLabel: hit > 0.75 }
 
     return { ...data, color: DIMMED_NODE, label: '', zIndex: 0 }
   })
@@ -774,11 +830,42 @@ function confirmLink(panel: Panel, from: string, to: string): void {
   ])
 }
 
-/** A query dims everything it did not match, so the hits keep their position. */
+/**
+ * The heat of each hit, on a scale stretched across the result set.
+ *
+ * The top hit is always 1 and the weakest returned is always 0, so the ramp
+ * spans whatever came back. Not the rank — the *score*, normalised — because
+ * the two differ exactly where it matters: a note tied with the top stays red
+ * instead of being demoted for being second, and a note that scored half as
+ * well sits halfway down the ramp whatever position it holds.
+ *
+ * It is the same trade the fusion already makes for BM25 (DESIGN.md 8.4): a
+ * per-set normalisation says nothing about how one query compares with another,
+ * and everything about how these results compare with each other, which is the
+ * only question a picture of one result set can answer.
+ */
+function heatOf(hits: readonly { id: string; score: number }[]): Map<string, number> {
+  const scores = hits.map((hit) => hit.score)
+  const top = Math.max(...scores)
+  const bottom = Math.min(...scores)
+  const range = top - bottom
+
+  return new Map(
+    // A single hit, or a set that scored identically, is all top: there is no
+    // gradient to draw and pretending otherwise would invent a ranking.
+    hits.map((hit) => [hit.id, range === 0 ? 1 : (hit.score - bottom) / range]),
+  )
+}
+
+/**
+ * A query dims everything it did not match, so the hits keep their position,
+ * and paints what it did match by how well it matched.
+ */
 function wireHighlight(
   surface: Surface,
   renderer: Sigma,
   query: HTMLInputElement,
+  legend: HTMLElement,
   emphasis: Emphasis,
 ): void {
   let generation = 0
@@ -788,6 +875,7 @@ function wireHighlight(
 
     if (query.value.trim() === '') {
       emphasis.hits = null
+      legend.classList.remove('on')
       renderer.refresh()
       return
     }
@@ -795,7 +883,9 @@ function wireHighlight(
     try {
       const result = await api.search(surface.project, { query: query.value, limit: 25 })
       if (mine !== generation) return
-      emphasis.hits = new Set(result.hits.map((hit) => hit.id))
+
+      emphasis.hits = heatOf(result.hits)
+      legend.classList.toggle('on', result.hits.length > 0)
       renderer.refresh()
     } catch (error) {
       if (mine !== generation) return
@@ -807,4 +897,18 @@ function wireHighlight(
     if ((event as KeyboardEvent).key === 'Enter') void run()
   })
   query.addEventListener('search', () => void run())
+}
+
+/** The key to the ramp, shown only while a search is on screen. */
+function heatLegend(): HTMLElement {
+  const strip = el('span', { class: 'heat-strip' })
+  strip.style.background = `linear-gradient(to right, ${HEAT.map(
+    ([r, g, b]) => `rgb(${r}, ${g}, ${b})`,
+  ).join(', ')})`
+
+  return el('span', { class: 'heat-legend' }, [
+    el('span', { class: 'hint', text: 'weaker' }),
+    strip,
+    el('span', { class: 'hint', text: 'stronger' }),
+  ])
 }
