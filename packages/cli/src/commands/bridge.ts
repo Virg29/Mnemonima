@@ -32,6 +32,12 @@ export function registerBridgeCommands(program: Command): void {
     )
     .option('-p, --project <name>', 'project name')
     .option('-d, --dir <path>', 'where to write; defaults to the configured export path')
+    // Declared in this order on purpose. A lone `--no-commit` is *true* by
+    // default in commander, never undefined, so `options.commit` always had a
+    // value and `export.commit` was never read: the command committed whatever
+    // the project's setting said. Declaring `--commit` first leaves the default
+    // unset, so the flags override the configuration instead of replacing it.
+    .option('--commit', 'commit the export even when export.commit is off')
     .option('--no-commit', 'write the files without committing them')
     .option('--push', 'push after committing')
     .option('--init-git', 'make the export directory a git repository first')
@@ -44,6 +50,8 @@ export function registerBridgeCommands(program: Command): void {
         '  mnemonima export',
         '  mnemonima export --init-git',
         '  mnemonima export --dir ../vault --no-commit',
+        '',
+        'Whether it commits comes from export.commit unless a flag says otherwise.',
       ].join('\n'),
     )
     .action(

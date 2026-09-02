@@ -85,13 +85,19 @@ export function commitAll(dir: string, message: string): CommitResult {
     return { ok: false, committed: false, output: `${dir} is not a git repository` }
   }
 
+  // Every one of these is scoped to `.` — the export directory — because it is
+  // routinely a subdirectory of a repository the operator is also working in.
+  // `add` was already scoped; `status` and `commit` were not, so a commit made
+  // for an export swept in whatever else happened to be staged and reported it
+  // under a message that named only notes. Measured: a machine commit reading
+  // "mnemonima: create NS-0001" carried away an unrelated `src.txt`.
   const staged = run(dir, ['add', '--all', '.'])
   if (!staged.ok) return { ...staged, committed: false }
 
-  const status = run(dir, ['status', '--porcelain'])
+  const status = run(dir, ['status', '--porcelain', '--', '.'])
   if (status.output === '') return { ok: true, committed: false, output: 'nothing to commit' }
 
-  const commit = run(dir, ['commit', '--quiet', '--message', message])
+  const commit = run(dir, ['commit', '--quiet', '--message', message, '--', '.'])
   return { ...commit, committed: commit.ok }
 }
 

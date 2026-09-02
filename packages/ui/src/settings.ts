@@ -130,7 +130,9 @@ export const NOTES: Record<string, string> = {
     'Changing this builds a new embedding space on the next index run. The old one stays.',
   'mcp.allowDestructive':
     'Off: an agent can archive but not delete, block a term but not forget it.',
-  'export.push': 'Pushing stays manual by design; this is here to be seen, not turned on lightly.',
+  'export.push':
+    'Not wired to anything: nothing reads this, and pushing happens only when a command is ' +
+    'given --push. Here because the key exists, not because turning it on does something.',
   'export.path': 'Relative to the project subdirectory. An absolute path wins over it.',
   'search.limits.minSimilarity':
     'A floor on the cosine. With gte-small it filters nothing below about 0.6.',
