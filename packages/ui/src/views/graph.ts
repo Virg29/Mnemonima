@@ -3,7 +3,7 @@ import louvain from 'graphology-communities-louvain'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
 import Sigma from 'sigma'
 import { api } from '../api.js'
-import type { GraphView, NoteView } from '../api.js'
+import type { GraphView, NoteExplanation, NoteView } from '../api.js'
 import type { Screen, Surface } from '../app.js'
 import { el } from '../dom.js'
 import { markdownEditor } from '../editor.js'
@@ -11,6 +11,7 @@ import type { NoteChoice } from '../editor.js'
 import { LayoutStore, resolveLayout } from '../layout.js'
 import type { Position } from '../layout.js'
 import { renderMarkdown } from '../markdown.js'
+import { describeFields, describeMatch, markedBy } from '../matches.js'
 import { isDark, onThemeChange } from '../theme.js'
 
 /**
@@ -143,6 +144,8 @@ interface Panel {
   readonly graph: Graph
   /** What the editor's `[[` completes over. */
   readonly notes: readonly NoteChoice[]
+  /** The live search state, so the preview can mark what the query found. */
+  readonly emphasis: Emphasis
 }
 
 /**
@@ -164,6 +167,8 @@ interface Emphasis {
   near: Set<string>
   /** The note being dragged from with shift held, mid-link. */
   linking: string | null
+  /** The query behind `hits`, kept so a preview can explain itself. */
+  query: string | null
 }
 
 export function graphScreen(): Screen {
@@ -278,8 +283,14 @@ export function graphScreen(): Screen {
       live = renderer
       wireSplitter(split, handle, renderer)
 
-      const emphasis: Emphasis = { hits: null, hovered: null, near: new Set(), linking: null }
-      const panel: Panel = { surface, detail, graph, notes: listing.notes }
+      const emphasis: Emphasis = {
+        hits: null,
+        hovered: null,
+        near: new Set(),
+        linking: null,
+        query: null,
+      }
+      const panel: Panel = { surface, detail, graph, notes: listing.notes, emphasis }
 
       wireEmphasis(renderer, graph, emphasis)
       wireDragging(panel, renderer, emphasis, layout)
@@ -806,30 +817,71 @@ async function showNote(panel: Panel, id: string): Promise<void> {
   show(detail, [el('p', { class: 'hint', text: 'loading…' })])
 
   try {
-    const note = await api.note(surface.project, id)
-    showPreview(panel, note)
+    // Both at once: the explanation is a second round trip, and asking for it
+    // after the note would show the body unmarked and then move it.
+    const [note, explanation] = await Promise.all([
+      api.note(surface.project, id),
+      explain(panel, id),
+    ])
+
+    showPreview(panel, note, explanation)
   } catch (error) {
     surface.fail(error)
   }
 }
 
-function showPreview(panel: Panel, note: NoteView): void {
+/**
+ * What the search on this screen found in one note, or null when there is no
+ * search on screen.
+ *
+ * A failure is reported and swallowed: not being able to explain a note is no
+ * reason to refuse to show it.
+ */
+async function explain(panel: Panel, id: string): Promise<NoteExplanation | null> {
+  const query = panel.emphasis.query
+  if (query === null) return null
+
+  try {
+    return await api.explain(panel.surface.project, id, query)
+  } catch (error) {
+    panel.surface.fail(error)
+    return null
+  }
+}
+
+function showPreview(panel: Panel, note: NoteView, explanation: NoteExplanation | null): void {
   const { surface, detail } = panel
 
   const body = el('div', { class: 'preview' })
   // The one place this page produces markup, and every character of the note
   // went through an escape on the way (see markdown.ts).
-  body.innerHTML = renderMarkdown(note.body)
+  body.innerHTML = renderMarkdown(note.body, markedBy(explanation))
+
+  const fields = explanation === null ? null : describeFields(explanation)
 
   show(detail, [
     head(note, [
       el('button', { text: 'Edit', onclick: () => showEditor(panel, note) }),
-      el('button', { text: 'Open', title: 'The full editor, with terms and backlinks', onclick: () => surface.go('note', note.id) }),
+      el('button', {
+        text: 'Open',
+        title: 'The full editor, with terms and backlinks',
+        onclick: () => surface.go('note', note.id, panel.emphasis.query ?? undefined),
+      }),
       el('span', {
         class: 'hint',
         text: ` ${note.links.length} out · ${note.backlinks.length} back`,
       }),
     ]),
+    // What the search on this screen found in this note, said the same way the
+    // note screen says it.
+    ...(explanation === null
+      ? []
+      : [
+          el('p', { class: 'hint matched-summary' }, [
+            el('span', { text: describeMatch(explanation) }),
+            ...(fields === null ? [] : [el('span', { text: ` · ${fields}` })]),
+          ]),
+        ]),
     body,
   ])
 
@@ -874,7 +926,7 @@ function showEditor(panel: Panel, note: NoteView): void {
         // edit changed — which is what the graph needs.
         const fresh = await api.note(surface.project, note.id)
         syncEdges(panel, fresh)
-        showPreview(panel, fresh)
+        showPreview(panel, fresh, await explain(panel, note.id))
       } catch (error) {
         surface.fail(error)
       }
@@ -896,7 +948,7 @@ function showEditor(panel: Panel, note: NoteView): void {
   show(detail, [
     head(note, [
       save,
-      el('button', { text: 'Cancel', onclick: () => showPreview(panel, note) }),
+      el('button', { text: 'Cancel', onclick: () => void showNote(panel, note.id) }),
       status,
     ]),
     code,
@@ -1038,6 +1090,7 @@ function wireHighlight(
 
     if (query.value.trim() === '') {
       emphasis.hits = null
+      emphasis.query = null
       legend.classList.remove('on')
       renderer.refresh()
       return
@@ -1048,6 +1101,7 @@ function wireHighlight(
       if (mine !== generation) return
 
       emphasis.hits = heatOf(result.hits)
+      emphasis.query = query.value
       legend.classList.toggle('on', result.hits.length > 0)
       renderer.refresh()
     } catch (error) {

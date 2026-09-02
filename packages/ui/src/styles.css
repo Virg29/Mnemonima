@@ -981,3 +981,9 @@ a:hover {
   border-bottom: 2px solid #e03131;
   padding-bottom: 1px;
 }
+
+.graph-detail .matched-summary {
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}

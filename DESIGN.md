@@ -824,6 +824,12 @@ The `why.meta` component is word level too, and exact: which of the note's own
 title, aliases and terms a query word hit is set intersection. It is shown as
 text in the strip rather than as a mark in the body, because that is where it
 came from.
+
+**The graph panel shows the same thing.** A search on the graph screen already
+paints the picture; clicking a hit then reads the note beside it, and the body
+is marked exactly as the note screen marks it — same passages, same bar, same
+words, from one module, because two screens answering the same question
+differently would be two answers.
 ### 8.6 Explainability
 
 Every hit carries a breakdown of its score: the contribution of `text`, `vector`,

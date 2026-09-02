@@ -3,6 +3,7 @@ import type { NoteExplanation, NoteView, RevisionDiff } from '../api.js'
 import type { Screen, Surface } from '../app.js'
 import { clear, el, when } from '../dom.js'
 import { markdownEditor } from '../editor.js'
+import { describeFields, describeMatch, markedBy } from '../matches.js'
 import { renderMarkdown } from '../markdown.js'
 
 /**
@@ -78,12 +79,7 @@ function renderEditor(
   const repaint = (body: string): void => {
     // The only place this page produces markup, and every character of the
     // note went through an escape on the way (see markdown.ts).
-    preview.innerHTML = renderMarkdown(body, {
-      // Only the passages fusion read. Every other matching chunk reached the
-      // score through a count, and marking those would mark the whole note.
-      matched: explanation?.passages.filter((passage) => passage.scoring),
-      words: explanation?.words,
-    })
+    preview.innerHTML = renderMarkdown(body, markedBy(explanation))
   }
 
   const view = markdownEditor({
@@ -403,9 +399,7 @@ function diffView(result: RevisionDiff, onClose: () => void): HTMLElement {
  * half *is* word level and exact.
  */
 function whyBar(surface: Surface, note: NoteView, explanation: NoteExplanation): HTMLElement {
-  const fields = explanation.fields.map(
-    (field) => `${field.field}: ${field.value}`,
-  )
+  const fields = describeFields(explanation)
 
   return el('span', { class: 'why-bar' }, [
     el('span', { class: 'hint', text: 'matched' }),
@@ -414,31 +408,11 @@ function whyBar(surface: Surface, note: NoteView, explanation: NoteExplanation):
       class: 'hint',
       text: describeMatch(explanation),
     }),
-    ...(fields.length === 0 ? [] : [el('span', { class: 'hint', text: `· ${fields.join(', ')}` })]),
+    ...(fields === null ? [] : [el('span', { class: 'hint', text: `· ${fields}` })]),
     el('button', {
       text: 'Clear',
       title: 'Show the note without the search marks',
       onclick: () => surface.go('note', note.id),
     }),
   ])
-}
-
-/**
- * How many passages made the score, and how many merely matched.
- *
- * The distinction is the fusion rule: the best chunk of each strategy is read,
- * and everything else contributes only through the multi-chunk term. Saying "43
- * passages" when two of them were read would be true and misleading.
- */
-function describeMatch(explanation: NoteExplanation): string {
-  const scoring = explanation.passages.filter((passage) => passage.scoring).length
-  const rest = explanation.passages.length - scoring
-
-  if (scoring === 0) {
-    return 'no passage scored — this note came back on its title, aliases or terms'
-  }
-
-  return rest === 0
-    ? `${scoring} passage(s) scored`
-    : `${scoring} passage(s) scored · ${rest} more matched, and only counted`
 }
