@@ -8,6 +8,52 @@ Breaking changes to the public contract (CLI flags, `find` JSON schema, MCP tool
 signatures, exported frontmatter schema) are recorded here even before the first
 public release.
 
+## [0.3.0] — 2026-09-04
+
+### Added
+
+- MCP: `mnemonima_release` drops one project from the daemon's pool, closing its
+  SQLite file, and `mnemonima_shutdown` stops the daemon outright. An agent that
+  hits a git checkout, a merge or a rename failing on a database Windows will not
+  let it touch now has an answer, and the descriptions say to try the first
+  before the second. That makes twenty-five tools: nine that read, eleven that
+  write, five that administer.
+- The daemon answers `POST /shutdown`, stopping in order — pending exports
+  flushed, databases closed — which a signal cannot do on Windows, where node's
+  `process.kill` terminates the process outright and the shutdown handler never
+  runs. `mnemonima daemon stop` asks that way first and kills only what will not
+  answer.
+
+### Fixed
+
+- A silent daemon was being recorded as a dead one. `findRunning` deleted the
+  state file whenever `/health` did not answer within a second and a half — but
+  node is single-threaded, and an index run or a cold hybrid search blocks it for
+  longer than that. The timeout was read as proof of death, and deleting the file
+  threw away the only handle anything had on the process: the daemon stayed
+  alive holding its databases open while the next command started a second one
+  beside it. Three accumulated that way in an afternoon, and no number of
+  `daemon stop` runs could reach any of them. The process itself is asked before
+  the file is touched, and a stopping daemon clears only an entry that still
+  names it.
+- `stopDaemon` waits for the process to actually go, and reports a daemon that
+  will not stop rather than claiming success on a signal it never confirmed;
+  `daemon restart` refuses to start a replacement until the old one is gone.
+  `daemon stop` reads the state file directly instead of requiring the daemon to
+  answer a probe first — stopping does not need a responsive daemon, and a busy
+  one is exactly what somebody is trying to stop.
+- An MCP session held one port and one token for its lifetime, so the first
+  daemon restart left every later call reporting `cannot reach the daemon`. The
+  client reconnects once on a connection failure — never on an error the daemon
+  itself returned, which is an answer rather than a disconnection.
+- `export.commit = false` was ignored on the command line: commander gives a
+  lone `--no-commit` the value `true`, so the flag read as "commit" and the
+  option's own default hid the configured setting. The automatic export honoured
+  the setting; the explicit one did not.
+- An automatic commit ran `git add --all` from the repository root and swept up
+  whatever the operator had staged elsewhere. Both halves are scoped to the
+  export directory now.
+
 ## [0.2.0] — 2026-09-02
 
 ### Added
