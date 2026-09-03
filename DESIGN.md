@@ -937,14 +937,14 @@ GET    /ui/*
 
 ### 10.3 MCP server
 
-Full access (read + write + administration), as decided. Twenty-three tools as
+Full access (read + write + administration), as decided. Twenty-five tools as
 built — the shape held, the list grew as the write path did:
 
 | Tools | Category |
 |---|---|
 | `mnemonima_search`, `mnemonima_get_note`, `mnemonima_list_notes`, `mnemonima_list_terms`, `mnemonima_graph`, `mnemonima_explain`, `mnemonima_history`, `mnemonima_doctor`, `mnemonima_config` | read (9) |
 | `mnemonima_create_note`, `mnemonima_update_note`, `mnemonima_archive_note`, `mnemonima_delete_note`, `mnemonima_link`, `mnemonima_unlink`, `mnemonima_add_alias`, `mnemonima_add_term`, `mnemonima_block_term`, `mnemonima_remove_term`, `mnemonima_undo` | write (11) |
-| `mnemonima_index`, `mnemonima_export`, `mnemonima_status` | administration (3) |
+| `mnemonima_index`, `mnemonima_export`, `mnemonima_status`, `mnemonima_release`, `mnemonima_shutdown` | administration (5) |
 
 There is no `mnemonima_list_projects`: the session is bound to one project
 (point 5 below), so listing the others would be an invitation to a write that
@@ -985,6 +985,43 @@ the graph):
 ---
 
 
+
+#### Letting go of the database
+
+SQLite holds the file open for as long as a project is loaded, and on Windows an
+open handle stops anything else from renaming, moving or deleting it — a git
+checkout across the export, a merge, a rename. So there has to be a way to ask,
+and an agent that only speaks MCP has to have it too:
+
+| Ask | What it does |
+| --- | --- |
+| `mnemonima_release` | drops this project from the pool, closing its database |
+| `mnemonima_shutdown` | stops the daemon entirely, closing every database |
+
+`POST /shutdown` exists for the second, and `mnemonima daemon stop` uses it as
+well. **A signal is not enough on Windows**: node's `process.kill` terminates the
+process outright, so the daemon's own shutdown never runs, a debounced export is
+lost with it, and the files are released by the operating system rather than
+closed. Asking over HTTP gives the same orderly stop everywhere; killing stays
+as the answer for a daemon that will not answer.
+
+Three rules the stranding taught, each of which was a live daemon nobody could
+reach, holding a database open, while the next command started another beside
+it:
+
+- **A silent daemon is not a dead one.** `/health` is trivial but node is
+  single-threaded: an index run blocks it for longer than the probe waits.
+  Deleting the state file on a timeout throws away the only handle anything has
+  on the process. The pid is asked before the file is touched.
+- **A shutting-down daemon clears only its own entry.** Otherwise it deletes the
+  record of whichever daemon replaced it.
+- **A stop that has not finished stopping is not a stop.** It waits for the
+  process to actually go, and `restart` refuses to start a replacement until it
+  has — two daemons over one project is exactly how the file stays locked.
+
+A long-lived client reconnects. An MCP session outlives many daemons — restarts,
+idle shutdowns, a release asked for by the agent itself — and a client holding
+one port for the life of the session died with the first of them.
 #### Reading the log
 
 The log recorded when a note changed and who changed it, and nothing about
@@ -1549,7 +1586,7 @@ and that is a perfectly normal outcome.
 | **4. Terms** | **done** | YAKE + IDF + KeyBERT + structural, gazetteer, dictionary, promotion, 4 knobs | `terms list --candidates` makes sense |
 | **5. Daemon** | **done** | HTTP, auto-spawn, LRU projects, Orama snapshots, revisions, undo | the second `find` under 1 s, hydration under 3 s |
 | **6. Markdown bridge** | **done** | export with round-trip frontmatter, import with conflicts, git autocommit | an export→Obsidian→import cycle loses nothing |
-| **7. MCP** | **done** | twenty-three tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
+| **7. MCP** | **done** | twenty-five tools in three groups, `batch_id`, `allowDestructive`, project scope, **the daemon takes over the write path** (see 15.1) | Claude Code sees and uses the tools; automatic export works |
 | **8. UI** | **done** | projects → graph → editor → search lab → terms → spaces → eval → settings → health | tuning the weights live with `why` |
 | **9. Eval** | **done** | golden set, recall@k / MRR / nDCG, `--tune`, run history | numbers instead of impressions |
 | **10+. Post-MVP** | `adopt` **done**; rerank not started | `adopt` (§14.1), cross-encoder rerank (§14.2) | the dry run over a foreign vault does not lie; the rerank checkbox either gives an nDCG gain or honestly does not |
@@ -1663,7 +1700,7 @@ the link graph with derived backlinks, preserved dangling targets, the graph
 boost and expansion; term extraction fusing YAKE, corpus IDF and candidate
 embeddings on top of the manual gazetteer; the local daemon with its hot-project
 pool; the markdown bridge with conflict resolution and git; and the MCP server
-with twenty-three tools, every write attributed, batched and undoable.
+with twenty-five tools, every write attributed, batched and undoable.
 
 … and the web UI: seven screens over the daemon's API, with the search lab
 tuning every weight live against a warm index and the graph creating a link by

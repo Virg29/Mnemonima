@@ -11,12 +11,22 @@ import type { DaemonStatus } from './server.js'
  * its exit code.
  */
 export class DaemonClient {
-  readonly #base: string
-  readonly #token: string
+  #base: string
+  #token: string
+  readonly #reconnect: (() => Promise<DaemonState>) | null
 
-  constructor(state: DaemonState) {
+  /**
+   * @param reconnect how to find a daemon again after this one stops answering.
+   *   A long-lived client — an MCP session lasts as long as the agent does —
+   *   otherwise held one port and one token for good: the moment the daemon
+   *   restarted, went idle or was stopped, every later call failed with "cannot
+   *   reach the daemon" and the session was finished. Given a way to look one
+   *   up, a connection failure becomes a reconnect and a retry.
+   */
+  constructor(state: DaemonState, reconnect?: () => Promise<DaemonState>) {
     this.#base = `http://127.0.0.1:${state.port}`
     this.#token = state.token
+    this.#reconnect = reconnect ?? null
   }
 
   async status(): Promise<DaemonStatus> {
@@ -39,7 +49,7 @@ export class DaemonClient {
     return this.#request<T>(method, path, body)
   }
 
-  async #request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async #request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
     let response: Response
 
     try {
@@ -53,6 +63,22 @@ export class DaemonClient {
         signal: AbortSignal.timeout(120_000),
       })
     } catch (cause) {
+      // Once, and only for a connection that failed outright — never for an
+      // error the daemon itself returned, which is an answer and not a
+      // disconnection.
+      if (retry && this.#reconnect !== null) {
+        try {
+          const state = await this.#reconnect()
+          this.#base = `http://127.0.0.1:${state.port}`
+          this.#token = state.token
+
+          return await this.#request<T>(method, path, body, false)
+        } catch {
+          // Fall through to the original failure: the reconnect not working is
+          // less informative than the request not working.
+        }
+      }
+
       throw new DaemonUnavailableError(
         `cannot reach the daemon: ${cause instanceof Error ? cause.message : String(cause)}`,
         { details: { path }, hint: 'run `mnemonima daemon status`, or `daemon restart`' },

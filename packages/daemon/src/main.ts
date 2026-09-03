@@ -44,6 +44,8 @@ const server = await startServer({
   capacity: settings.capacity,
   idleMs: settings.idleMs,
   snapshots: true,
+  // Hoisted: declared below, and only ever called later from a request handler.
+  onShutdown: (reason) => shutdown(reason),
 })
 
 writeDaemonState({
@@ -99,7 +101,7 @@ async function shutdown(reason: string): Promise<void> {
       `not indexed before stopping: ${unindexed.join(', ')} — run \`mnemonima index\`\n`,
     )
   }
-  clearDaemonState()
+  clearDaemonState(process.pid)
   process.stderr.write(`mnemonima daemon stopping (${reason})\n`)
   await server.close()
   process.exit(0)

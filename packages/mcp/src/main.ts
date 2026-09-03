@@ -67,13 +67,23 @@ function resolveProject(): string {
 }
 
 const project = resolveProject()
-const client = new DaemonClient(
+
+/**
+ * Find a daemon, starting one if there is none.
+ *
+ * Kept as a function rather than called once: an MCP session outlives many
+ * daemons — it restarts, it stops itself when idle, an agent asks it to let go
+ * of a locked database — and a client holding one port for the life of the
+ * session died with the first of those.
+ */
+const connect = async () =>
   (await findRunning(pkg.version)) ??
-    (await spawnDaemon({
-      version: pkg.version,
-      entry: require.resolve('@mnemonima/daemon/main'),
-    })),
-)
+  (await spawnDaemon({
+    version: pkg.version,
+    entry: require.resolve('@mnemonima/daemon/main'),
+  }))
+
+const client = new DaemonClient(await connect(), connect)
 
 // One batch for the whole session, so `undo --batch` has a single handle on
 // everything this agent does.

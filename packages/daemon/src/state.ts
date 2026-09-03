@@ -22,6 +22,9 @@ export interface DaemonState {
   readonly startedAt: number
 }
 
+/** How long to wait on a second probe when the process is known to be alive. */
+const BUSY_PROBE_MS = 10_000
+
 export function readDaemonState(): DaemonState | null {
   const file = daemonStatePath()
   if (!fs.existsSync(file)) return null
@@ -52,9 +55,38 @@ export function writeDaemonState(state: DaemonState): void {
   fs.renameSync(temp, file)
 }
 
-export function clearDaemonState(): void {
+/**
+ * Forgets the daemon we know about.
+ *
+ * @param expectedPid when given, the file is left alone unless it still names
+ *   this process. The state file is the *only* way to reach a running daemon —
+ *   deleting one that belongs to somebody else strands it, alive and holding
+ *   its databases open, where no command can find it again.
+ */
+export function clearDaemonState(expectedPid?: number): void {
   const file = daemonStatePath()
-  if (fs.existsSync(file)) fs.rmSync(file)
+  if (!fs.existsSync(file)) return
+
+  if (expectedPid !== undefined) {
+    const state = readDaemonState()
+    if (state !== null && state.pid !== expectedPid) return
+  }
+
+  fs.rmSync(file)
+}
+
+/** Whether a process id belongs to something still running. */
+export function isAlive(pid: number): boolean {
+  if (pid <= 0) return false
+
+  try {
+    // Signal 0 checks for existence without touching the process.
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM means it exists and belongs to somebody else, which is still alive.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 export interface HealthReport {
@@ -88,12 +120,30 @@ export async function findRunning(version: string): Promise<DaemonState | null> 
   if (state === null) return null
 
   const health = await probe(state.port)
-  if (health === null) {
-    clearDaemonState()
+  if (health !== null) return health.version === version ? state : null
+
+  // A silent daemon is not a dead one.
+  //
+  // `/health` is a trivial handler, but node is single-threaded and this
+  // process is not: a synchronous SQLite call, an index run or a cold hybrid
+  // search blocks the event loop for longer than the probe waits. Treating that
+  // timeout as proof of death — and deleting the state file on the strength of
+  // it — stranded a live daemon where nothing could reach it again, holding its
+  // databases open, while the next command started a second one. Three of them
+  // accumulated that way in a single afternoon.
+  //
+  // So the process itself is asked. While it is alive the state stays, whatever
+  // the probe said: `daemon stop` can then still find it, which is the whole
+  // point of writing the file down.
+  if (isAlive(state.pid)) {
+    const second = await probe(state.port, BUSY_PROBE_MS)
+    if (second !== null) return second.version === version ? state : null
+
     return null
   }
 
-  return health.version === version ? state : null
+  clearDaemonState(state.pid)
+  return null
 }
 
 export interface SpawnOptions {
@@ -148,15 +198,56 @@ export async function spawnDaemon(options: SpawnOptions): Promise<DaemonState> {
   })
 }
 
-export function stopDaemon(state: DaemonState): boolean {
-  try {
-    process.kill(state.pid)
-    clearDaemonState()
-    return true
-  } catch {
-    clearDaemonState()
+/**
+ * Stops the daemon and waits until it is actually gone.
+ *
+ * Returning the moment the signal is sent was a lie with consequences: the
+ * caller reported "Stopped", `restart` started a replacement immediately, and
+ * on Windows the old process still held the database file the new one wanted.
+ * A stop that has not finished stopping is not a stop.
+ *
+ * It asks over HTTP first and kills only what will not answer. On Windows there
+ * is no signal to catch — node's `process.kill` terminates the process outright
+ * — so killing means the daemon's own shutdown never runs and a debounced export
+ * dies with it. Asking gives an orderly stop on every platform.
+ */
+export async function stopDaemon(state: DaemonState, timeoutMs = 8000): Promise<boolean> {
+  if (!isAlive(state.pid)) {
+    clearDaemonState(state.pid)
     return false
   }
+
+  // Asked before it is killed. On Windows a signal cannot be caught — node
+  // terminates the process — so the daemon's own shutdown never runs there and
+  // a debounced export is lost with it. Over HTTP it flushes and closes in
+  // order on every platform. Killing stays as the answer for a daemon that will
+  // not answer.
+  await askToStop(state)
+
+  if (!isAlive(state.pid)) {
+    clearDaemonState(state.pid)
+    return true
+  }
+
+  try {
+    process.kill(state.pid)
+  } catch {
+    clearDaemonState(state.pid)
+    return false
+  }
+
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!isAlive(state.pid)) {
+      clearDaemonState(state.pid)
+      return true
+    }
+    await sleep(100)
+  }
+
+  // Still there after being asked. Say so rather than clearing the state and
+  // losing the only handle on it.
+  return false
 }
 
 function sleep(ms: number): Promise<void> {
@@ -174,4 +265,25 @@ function sleep(ms: number): Promise<void> {
  */
 export function idleTimeoutMs(minutes: number): number | null {
   return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : null
+}
+
+/**
+ * Asks the daemon to stop itself, and waits a moment for it to do so.
+ *
+ * Best effort by design: a daemon too busy to answer, or one from a version
+ * that has no such route, simply does not stop here and is killed instead.
+ */
+async function askToStop(state: DaemonState, graceMs = 3000): Promise<void> {
+  try {
+    await fetch(`http://127.0.0.1:${state.port}/shutdown`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${state.token}` },
+      signal: AbortSignal.timeout(1500),
+    })
+  } catch {
+    return
+  }
+
+  const deadline = Date.now() + graceMs
+  while (Date.now() < deadline && isAlive(state.pid)) await sleep(100)
 }

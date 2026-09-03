@@ -5,7 +5,16 @@ import { createProject, createSandbox, getConfig, setConfig } from '@mnemonima/s
 import type { Sandbox } from '@mnemonima/store'
 import { createEmbedder, indexProject, writeNewNote } from '@mnemonima/engine'
 import { ProjectPool } from './pool.js'
-import { idleTimeoutMs } from './state.js'
+import {
+  clearDaemonState,
+  findRunning,
+  idleTimeoutMs,
+  isAlive,
+  readDaemonState,
+  stopDaemon,
+  writeDaemonState,
+} from './state.js'
+import type { DaemonState } from './state.js'
 import { createServer } from './server.js'
 import type { DaemonStatus } from './server.js'
 
@@ -299,5 +308,87 @@ describe('the idle shutdown', () => {
   it('treats a value that is not a number as never', () => {
     expect(idleTimeoutMs(Number.NaN)).toBeNull()
     expect(idleTimeoutMs(Number.POSITIVE_INFINITY)).toBeNull()
+  })
+})
+
+/**
+ * The state file, which is the only handle anything has on a running daemon.
+ *
+ * Every case here was a stranded process before it was a test: a daemon left
+ * alive with its databases open and no way for any command to reach it, while
+ * the next request started another one beside it.
+ */
+describe('the daemon state file', () => {
+  let sandbox: Sandbox
+
+  beforeEach(() => {
+    sandbox = createSandbox()
+  })
+
+  afterEach(() => {
+    sandbox.cleanup()
+  })
+
+  const state = (pid: number): DaemonState => ({
+    pid,
+    port: 1,
+    token: 't',
+    version: '0.0.0',
+    startedAt: Date.now(),
+  })
+
+  it('knows this process is alive and a free number is not', () => {
+    expect(isAlive(process.pid)).toBe(true)
+    // Not a pid anything can hold: kill(0) on it is an error either way.
+    expect(isAlive(0)).toBe(false)
+    expect(isAlive(-1)).toBe(false)
+  })
+
+  it('refuses to clear a state file belonging to somebody else', () => {
+    // The one that stranded daemons. A process shutting down must not delete
+    // the entry of the one that replaced it.
+    writeDaemonState(state(4242))
+    clearDaemonState(9999)
+
+    expect(readDaemonState()?.pid).toBe(4242)
+
+    clearDaemonState(4242)
+    expect(readDaemonState()).toBeNull()
+  })
+
+  it('clears unconditionally when no owner is named', () => {
+    writeDaemonState(state(4242))
+    clearDaemonState()
+
+    expect(readDaemonState()).toBeNull()
+  })
+
+  it('keeps the state of a live daemon that did not answer', async () => {
+    // A silent daemon is not a dead one: `/health` runs on a single thread that
+    // an index run blocks for longer than the probe waits. Deleting the file on
+    // a timeout is what left processes unreachable.
+    writeDaemonState({ ...state(process.pid), port: 1 })
+
+    const found = await findRunning('0.0.0')
+
+    expect(found).toBeNull()
+    expect(readDaemonState()?.pid).toBe(process.pid)
+  }, 20_000)
+
+  it('forgets a daemon whose process is gone', async () => {
+    writeDaemonState({ ...state(0x7ffffffe), port: 1 })
+
+    expect(await findRunning('0.0.0')).toBeNull()
+    expect(readDaemonState()).toBeNull()
+  })
+
+  it('reports a stop it could not make, rather than clearing the entry', async () => {
+    // This process will not die when asked, which is exactly the shape of the
+    // failure worth reporting: the caller must not be told "stopped".
+    writeDaemonState(state(process.pid))
+
+    expect(await stopDaemon({ ...state(0x7ffffffe) }, 200)).toBe(false)
+    // The live entry is still there for `daemon stop` to find.
+    expect(readDaemonState()?.pid).toBe(process.pid)
   })
 })

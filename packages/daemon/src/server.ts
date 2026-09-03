@@ -77,6 +77,11 @@ export interface ServerOptions {
   readonly capacity?: number
   readonly idleMs?: number
   readonly snapshots?: boolean
+  /**
+   * What to run when a client asks the daemon to stop. Supplied by the entry
+   * point, which owns the order things are flushed and closed in.
+   */
+  readonly onShutdown?: (reason: string) => void | Promise<void>
 }
 
 export interface RunningServer {
@@ -115,6 +120,7 @@ export function createServer(options: ServerOptions): {
 } {
   const token = options.token ?? randomBytes(24).toString('hex')
   const startedAt = Date.now()
+  const onShutdown = options.onShutdown
 
   const pool = new ProjectPool({
     capacity: options.capacity,
@@ -558,6 +564,28 @@ export function createServer(options: ServerOptions): {
   app.post('/projects/:name/unload', (context) => {
     const name = context.req.param('name')
     return context.json({ name, unloaded: pool.release(name) })
+  })
+
+  /**
+   * Stop the daemon, from the outside, gracefully.
+   *
+   * The only way to stop it used to be a signal, and on Windows there is no
+   * signal to catch: node terminates the process outright, so the shutdown
+   * handler never runs, a debounced export is lost with it, and the databases
+   * are released by the operating system rather than closed. Asking over HTTP
+   * gives the same orderly shutdown on every platform.
+   *
+   * Answered before it acts, so the caller is told rather than seeing the
+   * connection drop.
+   */
+  app.post('/shutdown', (context) => {
+    const loaded = pool.status().map((entry) => entry.name)
+
+    setTimeout(() => {
+      void onShutdown?.('asked over http')
+    }, 50)
+
+    return context.json({ stopping: true, pid: process.pid, releasing: loaded })
   })
 
   // ---- administration ----------------------------------------------------

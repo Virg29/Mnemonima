@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { BadRequestError } from '@mnemonima/core'
-import { DaemonClient, clearDaemonState, readDaemonState, spawnDaemon, stopDaemon } from '@mnemonima/daemon'
+import { BadRequestError, DaemonUnavailableError } from '@mnemonima/core'
+import { DaemonClient, isAlive, readDaemonState, spawnDaemon, stopDaemon } from '@mnemonima/daemon'
 import { homeDir } from '@mnemonima/store'
 import { Command } from 'commander'
 import { cliVersion, currentDaemon, daemonEntry, importable } from '../daemon-link.js'
@@ -115,23 +115,49 @@ export function registerDaemonCommands(program: Command): void {
     .command('stop')
     .summary('stop the daemon')
     .action(async () => {
-      const running = await currentDaemon()
+      // Read straight from the state file rather than through ,
+      // which asks the daemon to answer first. Stopping does not need it to be
+      // responsive — it needs it to exist — and a busy daemon that failed to
+      // answer is exactly the one somebody is trying to stop.
+      const running = readDaemonState()
+
       if (running === null) {
-        // A leftover state file from a crash is not an error worth reporting.
-        clearDaemonState()
         printLine('The daemon is not running.')
         return
       }
 
-      printLine(stopDaemon(running) ? `Stopped (pid ${running.pid}).` : 'Stopped a stale entry.')
+      if (await stopDaemon(running)) {
+        printLine(`Stopped (pid ${running.pid}).`)
+        return
+      }
+
+      printLine(
+        isAlive(running.pid)
+          ? `Asked pid ${running.pid} to stop and it is still running.`
+          : `Cleared a stale entry for pid ${running.pid}.`,
+      )
+
+      if (isAlive(running.pid)) {
+        printNote(
+          `it still holds its databases open; end it with the process tools of this ` +
+            `machine if it will not go`,
+        )
+      }
     })
 
   daemon
     .command('restart')
     .summary('stop and start the daemon')
     .action(async () => {
-      const running = await currentDaemon()
-      if (running !== null) stopDaemon(running)
+      // Awaited: starting a replacement while the old one still holds the
+      // database files is how two daemons end up fighting over one project.
+      const running = readDaemonState()
+      if (running !== null && !(await stopDaemon(running))) {
+        throw new DaemonUnavailableError(`the daemon (pid ${running.pid}) would not stop`, {
+          details: { pid: running.pid },
+          hint: `end pid ${running.pid} with the process tools of this machine, then try again`,
+        })
+      }
 
       const started = await spawnDaemon({ version: cliVersion(), entry: daemonEntry() })
       printLine(`Restarted on port ${started.port} (pid ${started.pid}).`)

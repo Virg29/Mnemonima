@@ -534,5 +534,44 @@ export function createMcpServer(options: McpOptions): McpServer {
     },
   )
 
+  tool(
+    'mnemonima_release',
+    {
+      title: 'Let go of the database file',
+      description:
+        'Drop this project from the daemon’s memory, closing the SQLite file it holds open. ' +
+        'Use this when something outside mnemonima cannot touch the database — a git ' +
+        'checkout, a merge, a rename or a delete failing because the file is locked, which ' +
+        'is what Windows does while any process has it open.\n' +
+        '\n' +
+        'Nothing is lost: SQLite on disk is the source of truth, and the project loads again ' +
+        'by itself on the next call. What goes is the warm index, so the search after this ' +
+        'one is slower.\n' +
+        '\n' +
+        'Try this first. It frees the file without stopping anything else.',
+    },
+    () => client.call('POST', `${base}/unload`, {}),
+  )
+
+  tool(
+    'mnemonima_shutdown',
+    {
+      title: 'Stop the daemon',
+      description:
+        'Stop the background server entirely, closing every database it holds. The escalation ' +
+        'from mnemonima_release: use it when the file is still locked after releasing this ' +
+        'project, which means another project is holding it, or when the daemon itself has to ' +
+        'go away.\n' +
+        '\n' +
+        'It shuts down in order — pending exports flushed, databases closed — rather than ' +
+        'being killed, which matters on Windows where a signal cannot be caught and a ' +
+        'terminated daemon loses whatever it had not written yet.\n' +
+        '\n' +
+        'The next tool call starts a fresh daemon on its own, so this costs a reload, not a ' +
+        'session. If a file is still locked afterwards, the holder is not mnemonima.',
+    },
+    () => client.call('POST', '/shutdown', {}),
+  )
+
   return server
 }
